@@ -31,7 +31,7 @@ def lissa(train_loss, test_loss, layer_weight):
     :return: H^-1 * gradient of test loss
     """
     scale = 10
-    damping = 0
+    damping = 0.01
     num_samples = 1
     v = grad(test_loss, layer_weight)[0]
     cur_estimate = v.clone()
@@ -42,12 +42,12 @@ def lissa(train_loss, test_loss, layer_weight):
             hvp = hessian_vector_product(train_loss, layer_weight, cur_estimate)
             # hvp = torch.autograd.functional.hvp(train_loss, layer_weight, cur_estimate)
             cur_estimate = [a + (1 - damping) * b - c / scale for (a, b, c) in zip(v, cur_estimate, hvp)]
-            cur_estimate = torch.squeeze(torch.stack(cur_estimate)).view(1, -1)
+            cur_estimate = torch.squeeze(torch.stack(cur_estimate))#.view(1, -1)
             numpy_est = cur_estimate.detach().cpu().numpy()
             numpy_est = numpy_est.reshape(1, -1)
 
-            if (count % 100 == 0):
-                print("Recursion at depth %s: norm is %.8lf" % (count, np.linalg.norm(np.concatenate(numpy_est))))
+            # if (count % 100 == 0):
+            #     print("Recursion at depth %s: norm is %.8lf" % (count, np.linalg.norm(np.concatenate(numpy_est))))
             count += 1
             diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
             prev_norm = np.linalg.norm(np.concatenate(numpy_est))
@@ -58,7 +58,7 @@ def lissa(train_loss, test_loss, layer_weight):
     return ihvp.detach()
 
 
-def i_pert_loss(x_train, y_train, x_test, y_test, coefs, device='cpu'):
+def i_pert_loss(x_train, y_train, x_test, y_test, model, device='cpu'):
     """
     Estimate the effect that upweighting the inputs of a training instance will have on the loss of a test instance
     :param x_train: training data, [n_samples, n_feats]
@@ -75,25 +75,24 @@ def i_pert_loss(x_train, y_train, x_test, y_test, coefs, device='cpu'):
     :return: gradient with respect to input (gradient of training loss of each traning instance * H^-1 * gradient of test loss)
     """
     x_train, x_test = torch.from_numpy(x_train).float().to(device), torch.from_numpy(x_test).float().to(device)
-    y_train, y_test = torch.from_numpy(y_train).float().to(device), torch.from_numpy(y_test).float().to(device)
-    params = torch.from_numpy(coefs).float().to(device)
+    y_train, y_test = torch.from_numpy(y_train).long().to(device), torch.from_numpy(y_test).long().to(device)
+    model = model.to(device)
 
     x_train.requires_grad = True
     x_test.requires_grad = True
     # y_train.requires_grad = True
     # y_test.requires_grad = True
-    params.requires_grad = True
 
-    criterion = torch.nn.BCEWithLogitsLoss()
-    train_loss = criterion(x_train @ params.T, y_train.view(-1, 1))
-    test_loss = criterion(x_test @ params.T, y_test.view(-1, 1))
-    ihvp = lissa(train_loss, test_loss, params)
+    criterion = torch.nn.CrossEntropyLoss()
+    train_loss = criterion(model(x_train), y_train)
+    test_loss = criterion(model(x_test), y_test)
+    ihvp = lissa(train_loss, test_loss, model.lin_last.weight)
 
     x = x_train
     x.requires_grad = True
-    x_out = x_train @ params.T
-    x_loss = criterion(x_out, y_train.view(-1, 1))
-    grads = grad(x_loss, params, create_graph=True)[0]
+    x_out = model(x_train)
+    x_loss = criterion(x_out, y_train)
+    grads = grad(x_loss, model.lin_last.weight, create_graph=True)[0]
     grads = grads.squeeze()
     grads = grads.view(1, -1).squeeze()
     infl = (torch.dot(ihvp.view(-1, 1).squeeze(), grads)) / len(x_train)
