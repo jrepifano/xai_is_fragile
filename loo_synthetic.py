@@ -1,5 +1,6 @@
 import os
 import shap
+import torch
 import numpy as np
 import simple_influence
 from scipy.stats import spearmanr
@@ -9,7 +10,53 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, normalize
 
+
 os.environ['PYTHONHASHSEED'] = str(1234567890)
+
+
+class shallow_model(torch.nn.Module):
+    def __init__(self, n_feats, n_nodes, n_classes):
+        super(shallow_model, self).__init__()
+        self.lin1 = torch.nn.Linear(n_feats, n_nodes)
+        self.lin2 = torch.nn.Linear(n_nodes, n_classes)
+        self.selu = torch.nn.SELU()
+
+    def forward(self, x):
+        x = self.selu(self.lin1(x))
+        x = self.lin2(x)
+        return x
+
+    def score(self, x, y):
+        logits = torch.nn.functional.softmax(self.forward(x), dim=1)
+        score = torch.sum(torch.argmax(logits, dim=1) == y)
+        return score.numpy()
+
+
+def train_net(dataset, nodes):
+    x_train, x_test, y_train, y_test = dataset()
+    scaler = StandardScaler()
+    accs = list()
+    n_epochs = 5
+    device = 'cpu'
+    for i in range(x_train.shape[1]):
+        scaler = StandardScaler()
+        x_train_loo = np.delete(x_train, i, axis=1)
+        x_test_loo = np.delete(x_test, i, axis=1)
+        x_train_loo_scaled = scaler.fit_transform(x_train_loo)
+        x_test_loo_scaled = scaler.transform(x_test_loo)
+        classifier = shallow_model(x_train.shape[1], nodes, len(np.unique(y_train))).to(device)
+        criterion = torch.nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(classifier.parameters(), lr=1e-2)
+        for _ in range(n_epochs):
+            logits = classifier(torch.from_numpy(x_train_loo_scaled).float().to(device))
+            loss = criterion(logits, torch.from_numpy(y_train).long().to(device))
+            loss.backward()
+            optimizer.step()
+            classifier.zero_grad()
+        accs.append(classifier.score(torch.from_numpy(x_test_loo_scaled).float().to(device), torch.from_numpy(y_test).long().to(device)))
+        print('{}/{}'.format(i+1, x_train.shape[1]))
+    return np.hstack(accs), classifier, (x_train, x_test, y_train, y_test)
+
 
 
 def gen_data():
@@ -77,7 +124,6 @@ def print_correlations(truth, observations):
 def main():
     truth, classifier, dataset = loo_logreg(gen_data)
     influences = normalize(influence_approx(dataset, classifier).reshape(-1, 1))
-    # flip sign so it correlates with accuracy in the right directions
     shap_values = np.mean(np.mean(np.dstack(kernel_shap(dataset, classifier)), axis=2), axis=0).squeeze()
     permutation = permutation_importance(dataset, classifier)
     print_correlations(truth, (influences, shap_values, permutation))
