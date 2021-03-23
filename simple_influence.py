@@ -45,7 +45,6 @@ def lissa(train_loss, test_loss, layer_weight):
             cur_estimate = torch.squeeze(torch.stack(cur_estimate))#.view(1, -1)
             numpy_est = cur_estimate.detach().cpu().numpy()
             numpy_est = numpy_est.reshape(1, -1)
-
             # if (count % 100 == 0):
             #     print("Recursion at depth %s: norm is %.8lf" % (count, np.linalg.norm(np.concatenate(numpy_est))))
             count += 1
