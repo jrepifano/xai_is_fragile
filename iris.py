@@ -127,6 +127,8 @@ def figure_1_a_b():
 
 
 def figure_1_c_d():
+    ###################################################################
+    # Train Classif to find test instance with highest loss
     x, y = load_iris(return_X_y=True)
     x = StandardScaler().fit_transform(x)
     criterion = torch.nn.CrossEntropyLoss()
@@ -142,9 +144,10 @@ def figure_1_c_d():
         x_test, y_test = [torch.from_numpy(x) for x in [x_test, y_test]]
         train_acc = model.fit(x_train, y_train)
         test_loss.append(criterion(model(x_test.float()), y_test).item())
-
     max_loss = np.argmax(test_loss)
     true_test_loss = test_loss[max_loss]
+    #######################################################################
+    # Find training top 16.6% training points with highest loss
     train_index = np.hstack((np.arange(max_loss), np.arange(max_loss+1, len(x))))
     test_index = np.asarray([max_loss])
     criterion = torch.nn.CrossEntropyLoss(reduction='none')
@@ -157,8 +160,9 @@ def figure_1_c_d():
     x_train, y_train = [torch.from_numpy(x) for x in [x_train, y_train]]
     train_loss = criterion(model(x_train.float()), y_train)
     top_16 = np.argsort(train_loss.detach().numpy())[::-1][:24]
+    ##############################################################################
+    # Train classifiers with training points removed to compute difference in loss on test point
     actual_diff = list()
-
     for i in top_16:
         train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
         test_index = np.asarray([max_loss])
@@ -172,13 +176,15 @@ def figure_1_c_d():
         train_acc = model.fit(x_train, y_train)
         x_test, y_test = [torch.from_numpy(x) for x in [x_test, y_test]]
         actual_diff.append(true_test_loss - criterion(x_test.float(), y_test).item())
-
+    ##################################################################################
+    # Use Influence functions to estimate the difference in loss on test point with exact Hessian Computation
     new_x_train = scaler.transform(x[top_16])
     new_y_train = y[top_16]
     new_x_train, new_y_train = [torch.from_numpy(x) for x in [new_x_train, new_y_train]]
     c = influence_wrapper(new_x_train.float(), new_y_train, x_test.float(), y_test)
     i_up_loss = c.i_up_loss(model.lin1.weight)
-
+    ##################################################################################
+    # Compute spearman correlation on ranks of differences
     corr = spearmanr(np.argsort(actual_diff), np.argsort(i_up_loss))
     print(corr)
     pass
