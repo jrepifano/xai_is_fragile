@@ -77,7 +77,7 @@ class influence_wrapper():
         return loss
 
     def get_hessian(self, weights):
-        H_i = torch.empty((3, 8, 3, 8))
+        H_i = torch.zeros((3, 8, 3, 8))
         for i in range(len(self.x_train)):
             self.pointer = i
             H_i += torch.autograd.functional.hessian(self.get_loss, weights, vectorize=True)
