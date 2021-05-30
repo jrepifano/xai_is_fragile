@@ -7,10 +7,10 @@ def main():
     layers = [1, 2, 3, 4, 5, 6, 7, 8]
     train = np.mean(np.vstack([np.load('figure1/det_' + str(i) + 'l_l2_train.npy') for i in layers]), axis=1)
     test = np.mean(np.vstack([np.load('figure1/det_' + str(i) + 'l_l2_test.npy') for i in layers]), axis=1)
-    spearman = np.max(np.vstack([np.load('figure1/det_'+str(i)+'l_l2_spearman.npy') for i in layers]), axis=1)
-    pearson = np.max(np.vstack([np.load('figure1/det_' + str(i) + 'l_l2_pearson.npy') for i in layers]), axis=1)
-    mean_spearman = np.mean(np.vstack([np.load('figure1/det_'+str(i)+'l_l2_spearman.npy') for i in layers]), axis=1)
-    mean_pearson = np.mean(np.vstack([np.load('figure1/det_' + str(i) + 'l_l2_pearson.npy') for i in layers]), axis=1)
+    spearman = np.max(np.abs(np.vstack([np.load('figure1/det_'+str(i)+'l_l2_spearman.npy') for i in layers])), axis=1)
+    pearson = np.max(np.abs(np.vstack([np.load('figure1/det_' + str(i) + 'l_l2_pearson.npy') for i in layers])), axis=1)
+    mean_spearman = np.mean(np.abs(np.vstack([np.load('figure1/det_'+str(i)+'l_l2_spearman.npy') for i in layers])), axis=1)
+    mean_pearson = np.mean(np.abs(np.vstack([np.load('figure1/det_' + str(i) + 'l_l2_pearson.npy') for i in layers])), axis=1)
     eig = np.mean(np.vstack([np.load('figure1/det_' + str(i) + 'l_l2_eig.npy') for i in layers]), axis=1)
 
     plt.plot(layers, train, label='Mean Train Acc')
