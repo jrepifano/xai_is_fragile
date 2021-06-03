@@ -22,8 +22,14 @@ def orderOfMagnitude(number):
 
 
 def scale_hyperp(log_det, nll, kl):
+    # Find the alpha scaling factor
+    lli_power = orderOfMagnitude(nll)
+    ldi_power = orderOfMagnitude(log_det)
+    alpha = 10**(lli_power - ldi_power - 1)     # log_det_i needs to be 1 less power than log_likelihood_i
+
     beta = list()
     # Find scaling factor for each kl term
+    kl = [i.item() for i in kl]
     smallest_power = orderOfMagnitude(np.min(kl))
     for i in range(len(kl)):
         power = orderOfMagnitude(kl[i])
@@ -31,12 +37,7 @@ def scale_hyperp(log_det, nll, kl):
         beta.append(10.0**power)
 
     # Find the tau scaling factor
-    lli_power = orderOfMagnitude(nll)
-    tau = 10**(smallest_power - lli_power)
-
-    # Find the alpha scaling factor
-    ldi_power = orderOfMagnitude(log_det)
-    alpha = 10**(lli_power - ldi_power - 1)     # log_det_i needs to be 1 less power than log_likelihood_i
+    tau = 10**(smallest_power - lli_power - 3)
 
     return alpha, beta, tau
 
@@ -45,37 +46,35 @@ class Model(torch.nn.Module):
     def __init__(self, n_feats, n_nodes, n_classes):
         super(Model, self).__init__()
         self.lin1 = vdp.Linear(n_feats, n_nodes, input_flag=True)
-        self.lin2 = vdp.Linear(n_nodes, n_nodes)
-        self.lin3 = vdp.Linear(n_nodes, n_nodes)
-        self.lin4 = vdp.Linear(n_nodes, n_nodes)
-        self.lin5 = vdp.Linear(n_nodes, n_nodes)
-        self.lin6 = vdp.Linear(n_nodes, n_nodes)
+        self.lin2 = vdp.Linear(n_nodes, n_classes)
+        self.lin3 = vdp.Linear(n_nodes, n_classes)
+        self.lin4 = vdp.Linear(n_nodes, n_classes)
+        self.lin5 = vdp.Linear(n_nodes, n_classes)
+        self.lin6 = vdp.Linear(n_nodes, n_classes)
         self.lin_last = vdp.Linear(n_nodes, n_classes)
         self.softmax = vdp.Softmax()
-        self.relu = vdp.ReLU()
-        self.tanh = vdp.Tanh()
+        self.relu = vdp.SELU()
         self.scale = False
-        self.alpha = 1
-        self.beta = 1
-        self.tau = 1
+        self.alpha = 0.1
+        self.beta = [1 for layer in self.children() if hasattr(layer, 'kl_term')]
+        self.tau = 0.01
 
     def forward(self, x):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
         if not torch.is_tensor(x):
             x = torch.tensor(x, requires_grad=True, device=device, dtype=torch.float32)
         mu, sigma = self.lin1(x)
-        mu, sigma = self.tanh(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.lin2(mu, sigma)
-        mu, sigma = self.tanh(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.lin3(mu, sigma)
-        mu, sigma = self.tanh(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.lin4(mu, sigma)
-        mu, sigma = self.tanh(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.lin5(mu, sigma)
-        mu, sigma = self.tanh(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.lin6(mu, sigma)
-        mu, sigma = self.tanh(mu, sigma)
-
+        mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.lin_last(mu, sigma)
         mu, sigma = self.softmax(mu, sigma)
         return mu, sigma
@@ -85,17 +84,17 @@ class Model(torch.nn.Module):
         if not torch.is_tensor(x):
             x = torch.tensor(x, requires_grad=True, device=device, dtype=torch.float32)
         mu, sigma = self.lin1(x)
-        mu, sigma = self.tanh(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.lin2(mu, sigma)
-        mu, sigma = self.tanh(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.lin3(mu, sigma)
-        mu, sigma = self.tanh(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.lin4(mu, sigma)
-        mu, sigma = self.tanh(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.lin5(mu, sigma)
-        mu, sigma = self.tanh(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.lin6(mu, sigma)
-        mu, sigma = self.tanh(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
         return mu, sigma
 
     def fit(self, x, y, no_epochs=1000):
@@ -103,17 +102,18 @@ class Model(torch.nn.Module):
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=100, verbose=False)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=500, verbose=False)
         for epoch in range(no_epochs):
             optimizer.zero_grad()
             mu, sigma = self.forward(x)
             log_det, nll = vdp.ELBOLoss(mu, sigma, y)
+            kl = vdp.gather_kl(self)
             if not self.scale:
-                kl_scale = [self.lin1.kl_term().item(), self.lin_last.kl_term().item()]
-                self.alpha, self.beta, self.tau = scale_hyperp(log_det.item(), nll.item(), kl_scale)
+                self.alpha, self.beta, self.tau = scale_hyperp(log_det, nll, kl)
                 self.scale = True
-            kl = [self.lin1.kl_term(), self.lin_last.kl_term()]
             loss = self.alpha * log_det + nll + self.tau * torch.stack([a * b for a, b in zip(self.beta, kl)]).sum()
+            if epoch % 10000 == 0:
+                print('Epoch {}/{}, Loss: {:.2f}, Train Acc: {:.2f}'.format(epoch+1, no_epochs, loss.item(), self.score(x, y)))
             loss.backward()
             optimizer.step()
             scheduler.step(loss.item())
@@ -154,7 +154,7 @@ class influence_wrapper:
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor([self.y_train[self.pointer]], device=self.device))
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor([self.y_train[self.pointer]], device=self.device), self.model)
         return loss
 
     def get_train_loss(self, mu, sigma):
@@ -166,19 +166,19 @@ class influence_wrapper:
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_train, device=self.device))
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_train, device=self.device), self.model)
         return loss
 
     def get_test_loss(self, mu, sigma):
         mu_x, sigma_x = self.model.bottleneck(self.x_test.reshape(1, -1))
-        mu_y = mu_x @ mu.T
+        mu_y = mu_x @ mu.T + self.model.lin_last.mu.bias
         sigma_y = (vdp.softplus(sigma) @ sigma_x.T).T + \
                   (mu ** 2 @ sigma_x.T).T + \
-                  (mu_x ** 2 @ vdp.softplus(sigma).T)
+                  (mu_x ** 2 @ vdp.softplus(sigma).T) + self.model.lin_last.sigma.bias
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_test, device=self.device))
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_test, device=self.device), self.model)
         return loss
 
     def get_hessian(self, mu, sigma):
@@ -220,23 +220,6 @@ class influence_wrapper:
         ihvp = [a / num_samples for a in ihvp]
         ihvp = torch.squeeze(torch.stack(ihvp))
         return ihvp.detach()
-
-    def i_up_params(self, mu, sigma, idx, estimate=False):
-        i_up_params = list()
-        if estimate:
-            for i in idx:
-                self.pointer = i
-                grad = torch.autograd.grad(self.get_loss(mu, sigma), mu)[0]
-                i_up_params.append(self.LiSSA(torch.autograd.functional.hvp(self.get_train_loss, (mu, sigma), grad)[1], mu).detach().cpu().numpy())
-        else:
-            H = self.get_hessian(self.model.lin_last.weight)
-            H_inv = torch.inverse(H)
-            for i in idx:
-                self.pointer = i
-                grad = torch.autograd.grad(self.get_loss(mu, sigma), mu)[0]
-                orig_shape = grad.shape
-                i_up_params.append((H_inv @ grad.float().view(-1, 1)).view(orig_shape).detach().cpu().numpy())
-        return i_up_params
 
     def i_up_loss(self, mu, sigma, idx, estimate=False):
         i_up_loss = list()
@@ -296,14 +279,14 @@ def find_top_train(max_loss=83):
     y_train, y_test = y[train_index], y[test_index]
     scaler = StandardScaler().fit(x_train)
     x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
-    model = Model(x.shape[1], 8, 3).to('cuda:0')
-    model.fit(x_train, y_train, 10000)
+    model = Model(x.shape[1], 5, 3).to('cuda:0')
+    model.fit(x_train, y_train, 60000)
     train_acc = model.score(x_train, y_train)
     train_loss = model.get_indiv_loss(x_train, y_train)
     to_look = int(1/6 * len(x-1))
     top_train = np.argsort(train_loss)[::-1][:to_look]
     top_eig = get_hessian_info(model, x_train, y_train)
-    torch.save(model.state_dict(), 'loo_params_6l.pt')
+    torch.save(model.state_dict(), 'loo_params.pt')
     return top_train, model, top_eig, train_acc
 
 
@@ -328,9 +311,9 @@ def exact_difference(model, top_train, max_loss):
         scaler = StandardScaler().fit(x_train)
         x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
         x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
-        # model = Model(x.shape[1], 8, 3).to('cuda:0')
-        model.load_state_dict(torch.load('loo_params_6l.pt'))
-        model.fit(x_train, y_train, 1000)
+        # model = Model(x.shape[1], 5, 3).to('cuda:0')
+        model.load_state_dict(torch.load('loo_params.pt'))
+        model.fit(x_train, y_train, 7500)
         # exact_parameter_diff.append(model.lin_last.weight.detach().cpu().numpy() - true_parameters)
         exact_loss_diff.append(model.get_indiv_loss(x_test, y_test) - true_loss)
     # exact_parameter_diff = [np.linalg.norm(diff, ord=2) for diff in exact_parameter_diff]
@@ -338,7 +321,7 @@ def exact_difference(model, top_train, max_loss):
 
 
 def approx_difference(model, top_train, max_loss):
-    model.load_state_dict(torch.load('loo_params_6l.pt'))
+    model.load_state_dict(torch.load('loo_params.pt'))
     x, y = load_iris(return_X_y=True)
     train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
     test_index = np.asarray([max_loss])
@@ -354,26 +337,27 @@ def approx_difference(model, top_train, max_loss):
 
 
 def main(n_iters):
-    train, test, eig, pearson, spearman = list(), list(), list(), list(), list()
-    for i in range(n_iters):
-        try:
-            start_time = time.time()
-            # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
-            max_loss = 83
-            print('Done max loss')
-            top_train, model, top_eig, train_acc = find_top_train(max_loss)
-            print(train_acc)
-            print('Done top train')
-            exact_loss_diff = exact_difference(model, top_train, max_loss)
-            print('Done Exact Diff')
-            approx_loss_diff = approx_difference(model, top_train, max_loss)
-            train.append(train_acc)
-            eig.append(top_eig)
-            pearson.append(pearsonr(exact_loss_diff, approx_loss_diff))
-            spearman.append(spearmanr(exact_loss_diff, approx_loss_diff))
-            print('Done {}/{} in {:.2f} minutes'.format(i+1, n_iters, (time.time()-start_time)/60))
-        except Exception:
-            continue
+    train, eig, pearson, spearman = list(), list(), list(), list()
+    i = 0
+    while i < n_iters:
+        start_time = time.time()
+        # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
+        max_loss = 83
+        # print('Done max loss')
+        top_train, model, top_eig, train_acc = find_top_train(max_loss)
+        print(train_acc)
+        print('Done top train')
+        exact_loss_diff = exact_difference(model, top_train, max_loss)
+        print('Done Exact Diff')
+        approx_loss_diff = approx_difference(model, top_train, max_loss)
+        train.append(train_acc)
+        eig.append(top_eig)
+        pearson.append(pearsonr(exact_loss_diff, approx_loss_diff))
+        spearman.append(spearmanr(exact_loss_diff, approx_loss_diff))
+        print(pearsonr(exact_loss_diff, approx_loss_diff))
+        print(spearmanr(exact_loss_diff, approx_loss_diff))
+        print('Done {}/{} in {:.2f} minutes'.format(i+1, n_iters, (time.time()-start_time)/60))
+        i += 1
         if i % 10 == 0:
             np.save('figure1/vdp_6l_train.npy', train, allow_pickle=True)
             np.save('figure1/vdp_6l_eig.npy', eig, allow_pickle=True)
@@ -388,4 +372,4 @@ def main(n_iters):
 
 
 if __name__ == '__main__':
-    main(n_iters=10)
+    main(n_iters=50)

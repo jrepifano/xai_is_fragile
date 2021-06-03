@@ -22,8 +22,14 @@ def orderOfMagnitude(number):
 
 
 def scale_hyperp(log_det, nll, kl):
+    # Find the alpha scaling factor
+    lli_power = orderOfMagnitude(nll)
+    ldi_power = orderOfMagnitude(log_det)
+    alpha = 10**(lli_power - ldi_power - 1)     # log_det_i needs to be 1 less power than log_likelihood_i
+
     beta = list()
     # Find scaling factor for each kl term
+    kl = [i.item() for i in kl]
     smallest_power = orderOfMagnitude(np.min(kl))
     for i in range(len(kl)):
         power = orderOfMagnitude(kl[i])
@@ -31,12 +37,7 @@ def scale_hyperp(log_det, nll, kl):
         beta.append(10.0**power)
 
     # Find the tau scaling factor
-    lli_power = orderOfMagnitude(nll)
-    tau = 10**(smallest_power - lli_power)
-
-    # Find the alpha scaling factor
-    ldi_power = orderOfMagnitude(log_det)
-    alpha = 10**(lli_power - ldi_power - 2)     # log_det_i needs to be 1 less power than log_likelihood_i
+    tau = 10**(smallest_power - lli_power - 2)
 
     return alpha, beta, tau
 
@@ -50,9 +51,9 @@ class Model(torch.nn.Module):
         self.softmax = vdp.Softmax()
         self.relu = vdp.SELU()
         self.scale = False
-        self.alpha = 1
-        self.beta = 1
-        self.tau = 1
+        self.alpha = 0.1
+        self.beta = [1 for layer in self.children() if hasattr(layer, 'kl_term')]
+        self.tau = 0.01
 
     def forward(self, x):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
@@ -60,8 +61,8 @@ class Model(torch.nn.Module):
             x = torch.tensor(x, requires_grad=True, device=device, dtype=torch.float32)
         mu, sigma = self.lin1(x)
         mu, sigma = self.relu(mu, sigma)
-        # mu, sigma = self.lin2(mu, sigma)
-        # mu, sigma = self.relu(mu, sigma)
+        mu, sigma = self.lin2(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.lin_last(mu, sigma)
         mu, sigma = self.softmax(mu, sigma)
         return mu, sigma
@@ -81,22 +82,21 @@ class Model(torch.nn.Module):
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
-        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=500, verbose=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=500, verbose=False)
         for epoch in range(no_epochs):
             optimizer.zero_grad()
             mu, sigma = self.forward(x)
             log_det, nll = vdp.ELBOLoss(mu, sigma, y)
+            kl = vdp.gather_kl(self)
             if not self.scale:
-                kl_scale = [self.lin1.kl_term().item(), self.lin2.kl_term().item(), self.lin_last.kl_term().item()]
-                self.alpha, self.beta, self.tau = scale_hyperp(log_det.item(), nll.item(), kl_scale)
+                self.alpha, self.beta, self.tau = scale_hyperp(log_det, nll, kl)
                 self.scale = True
-            kl = [self.lin1.kl_term(), self.lin2.kl_term(), self.lin_last.kl_term()]
             loss = self.alpha * log_det + nll + self.tau * torch.stack([a * b for a, b in zip(self.beta, kl)]).sum()
             if epoch % 10000 == 0:
                 print('Epoch {}/{}, Loss: {:.2f}, Train Acc: {:.2f}'.format(epoch+1, no_epochs, loss.item(), self.score(x, y)))
             loss.backward()
             optimizer.step()
-            # scheduler.step(loss.item())
+            scheduler.step(loss.item())
 
     def score(self, x, y):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
@@ -134,7 +134,7 @@ class influence_wrapper:
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor([self.y_train[self.pointer]], device=self.device))
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor([self.y_train[self.pointer]], device=self.device), self.model)
         return loss
 
     def get_train_loss(self, mu, sigma):
@@ -146,7 +146,7 @@ class influence_wrapper:
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_train, device=self.device))
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_train, device=self.device), self.model)
         return loss
 
     def get_test_loss(self, mu, sigma):
@@ -158,7 +158,7 @@ class influence_wrapper:
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_test, device=self.device))
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_test, device=self.device), self.model)
         return loss
 
     def get_hessian(self, mu, sigma):
@@ -317,17 +317,15 @@ def approx_difference(model, top_train, max_loss):
 
 
 def main(n_iters):
-    train, test, eig, pearson, spearman = list(), list(), list(), list(), list()
+    train, eig, pearson, spearman = list(), list(), list(), list()
     i = 0
-    while i < n_iters - 1:
+    while i < n_iters:
         start_time = time.time()
         # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
         max_loss = 83
         # print('Done max loss')
         top_train, model, top_eig, train_acc = find_top_train(max_loss)
         print(train_acc)
-        if train_acc < 0.8:
-            continue
         print('Done top train')
         exact_loss_diff = exact_difference(model, top_train, max_loss)
         print('Done Exact Diff')
@@ -340,21 +338,18 @@ def main(n_iters):
         print(spearmanr(exact_loss_diff, approx_loss_diff))
         print('Done {}/{} in {:.2f} minutes'.format(i+1, n_iters, (time.time()-start_time)/60))
         i += 1
-        pass
-    #     if i % 10 == 0:
-    #         np.save('figure1/vdp_1l_train.npy', train, allow_pickle=True)
-    #         # np.save('figure1/vdp_1l_l2_approx_test.npy', test)
-    #         np.save('figure1/vdp_1l_eig.npy', eig, allow_pickle=True)
-    #         np.save('figure1/vdp_1l_pearson.npy', pearson, allow_pickle=True)
-    #         np.save('figure1/vdp_1l_spearman.npy', spearman, allow_pickle=True)
-    # np.save('figure1/vdp_1l_train.npy', train, allow_pickle=True)
-    # # np.save('figure1/vdp_1l_l2_approx_test.npy', test)
-    # np.save('figure1/vdp_1l_eig.npy', eig, allow_pickle=True)
-    # np.save('figure1/vdp_1l_pearson.npy', pearson, allow_pickle=True)
-    # np.save('figure1/vdp_1l_spearman.npy', spearman, allow_pickle=True)
+        if i % 10 == 0:
+            np.save('figure1/vdp_1l_train.npy', train, allow_pickle=True)
+            np.save('figure1/vdp_1l_eig.npy', eig, allow_pickle=True)
+            np.save('figure1/vdp_1l_pearson.npy', pearson, allow_pickle=True)
+            np.save('figure1/vdp_1l_spearman.npy', spearman, allow_pickle=True)
+    np.save('figure1/vdp_1l_train.npy', train, allow_pickle=True)
+    np.save('figure1/vdp_1l_eig.npy', eig, allow_pickle=True)
+    np.save('figure1/vdp_1l_pearson.npy', pearson, allow_pickle=True)
+    np.save('figure1/vdp_1l_spearman.npy', spearman, allow_pickle=True)
 
     pass
 
 
 if __name__ == '__main__':
-    main(n_iters=5)
+    main(n_iters=50)

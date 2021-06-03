@@ -147,11 +147,23 @@ def ELBOLoss(mu, sigma, y):
     nll = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
     return log_det, nll
 
-def ELBOLoss_2(outputs, y):
+def ELBOLoss_2(outputs, y, model=None):
     mu = outputs[0]
     sigma = outputs[1]
     y_hot = torch.nn.functional.one_hot(y, num_classes=3)
     sigma_clamped = torch.log(1+torch.exp(torch.clamp(sigma, 0, 88)))
     log_det = torch.mean(torch.log(torch.prod(sigma_clamped, dim=1)))
     nll = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
-    return 0.001*log_det + nll
+    if model == None:
+        return 0.001 * log_det + nll
+    else:
+        kl = gather_kl(model)
+        return model.alpha * log_det + nll + model.tau * torch.stack([a * b for a, b in zip(model.beta, kl)]).sum()
+
+
+def gather_kl(model):
+    kl = list()
+    for layer in model.children():
+        if hasattr(layer, 'kl_term'):
+            kl.append(layer.kl_term())
+    return kl
