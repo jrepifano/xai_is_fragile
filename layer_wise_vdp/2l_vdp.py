@@ -212,6 +212,8 @@ class influence_wrapper:
                                                                                        (mu, sigma), (train_grad))[1], mu).view(-1, 1)).detach().cpu().numpy()[0][0])
         else:
             H = self.get_hessian(mu, sigma)
+            if torch.det(H) == 0:
+                H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
             H_inv = torch.inverse(H)
             for i in idx:
                 self.pointer = i
@@ -266,7 +268,7 @@ def find_top_train(max_loss=83):
     to_look = int(1/6 * len(x-1))
     top_train = np.argsort(train_loss)[::-1][:to_look]
     top_eig = get_hessian_info(model, x_train, y_train)
-    torch.save(model.state_dict(), 'loo_params.pt')
+    torch.save(model.state_dict(), 'loo_params_2l.pt')
     return top_train, model, top_eig, train_acc
 
 
@@ -292,7 +294,7 @@ def exact_difference(model, top_train, max_loss):
         x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
         x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
         # model = Model(x.shape[1], 5, 3).to('cuda:0')
-        model.load_state_dict(torch.load('loo_params.pt'))
+        model.load_state_dict(torch.load('loo_params_2l.pt'))
         model.fit(x_train, y_train, 7500)
         # exact_parameter_diff.append(model.lin_last.weight.detach().cpu().numpy() - true_parameters)
         exact_loss_diff.append(model.get_indiv_loss(x_test, y_test) - true_loss)
@@ -301,7 +303,7 @@ def exact_difference(model, top_train, max_loss):
 
 
 def approx_difference(model, top_train, max_loss):
-    model.load_state_dict(torch.load('loo_params.pt'))
+    model.load_state_dict(torch.load('loo_params_2l.pt'))
     x, y = load_iris(return_X_y=True)
     train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
     test_index = np.asarray([max_loss])
@@ -320,35 +322,36 @@ def main(n_iters):
     train, eig, pearson, spearman = list(), list(), list(), list()
     i = 0
     while i < n_iters:
-        start_time = time.time()
-        # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
-        max_loss = 83
-        # print('Done max loss')
-        top_train, model, top_eig, train_acc = find_top_train(max_loss)
-        print(train_acc)
-        print('Done top train')
-        exact_loss_diff = exact_difference(model, top_train, max_loss)
-        print('Done Exact Diff')
-        approx_loss_diff = approx_difference(model, top_train, max_loss)
+        try:
+            start_time = time.time()
+            # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
+            max_loss = 83
+            # print('Done max loss')
+            top_train, model, top_eig, train_acc = find_top_train(max_loss)
+            print(train_acc)
+            print('Done top train')
+            exact_loss_diff = exact_difference(model, top_train, max_loss)
+            print('Done Exact Diff')
+            approx_loss_diff = approx_difference(model, top_train, max_loss)
+            p = pearsonr(exact_loss_diff, approx_loss_diff)
+            s = spearmanr(exact_loss_diff, approx_loss_diff)
+        except Exception:
+            continue
         train.append(train_acc)
         eig.append(top_eig)
-        pearson.append(pearsonr(exact_loss_diff, approx_loss_diff))
-        spearman.append(spearmanr(exact_loss_diff, approx_loss_diff))
-        print(pearsonr(exact_loss_diff, approx_loss_diff))
-        print(spearmanr(exact_loss_diff, approx_loss_diff))
+        pearson.append(p[0])
+        spearman.append(s[0])
         print('Done {}/{} in {:.2f} minutes'.format(i+1, n_iters, (time.time()-start_time)/60))
-        i += 1
-        if i % 10 == 0:
+        if i % 5 == 0:
             np.save('figure1/vdp_2l_train.npy', train, allow_pickle=True)
             np.save('figure1/vdp_2l_eig.npy', eig, allow_pickle=True)
             np.save('figure1/vdp_2l_pearson.npy', pearson, allow_pickle=True)
             np.save('figure1/vdp_2l_spearman.npy', spearman, allow_pickle=True)
+        i += 1
     np.save('figure1/vdp_2l_train.npy', train, allow_pickle=True)
     np.save('figure1/vdp_2l_eig.npy', eig, allow_pickle=True)
     np.save('figure1/vdp_2l_pearson.npy', pearson, allow_pickle=True)
     np.save('figure1/vdp_2l_spearman.npy', spearman, allow_pickle=True)
-
-    pass
 
 
 if __name__ == '__main__':

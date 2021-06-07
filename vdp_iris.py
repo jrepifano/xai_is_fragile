@@ -92,8 +92,8 @@ class Model(torch.nn.Module):
                 self.alpha, self.beta, self.tau = scale_hyperp(log_det, nll, kl)
                 self.scale = True
             loss = self.alpha * log_det + nll + self.tau * torch.stack([a * b for a, b in zip(self.beta, kl)]).sum()
-            if epoch % 10000 == 0:
-                print('Epoch {}/{}, Loss: {:.2f}, Train Acc: {:.2f}'.format(epoch+1, no_epochs, loss.item(), self.score(x, y)))
+            # if epoch % 10000 == 0:
+            #     print('Epoch {}/{}, Loss: {:.2f}, Train Acc: {:.2f}'.format(epoch+1, no_epochs, loss.item(), self.score(x, y)))
             loss.backward()
             optimizer.step()
             scheduler.step(loss.item())
@@ -172,19 +172,19 @@ class influence_wrapper:
         H = H.view(square_size, square_size)
         return H
 
-    def LiSSA(self, v, weights):
+    def LiSSA(self, v, mu, sigma):
         count = 0
         cur_estimate = v
-        damping = 0
+        damping = 0.001
         scale = 10
         num_samples = len(self.x_train)
-        prev_norm = 1
-        diff = prev_norm
         ihvp = None
         for i in range(len(self.x_train)):
             self.pointer = i
+            prev_norm = 1
+            diff = prev_norm
             while diff > 0.00001 and count < 10000:
-                hvp = torch.autograd.functional.hvp(self.get_train_loss, weights, cur_estimate)[1]
+                hvp = torch.autograd.functional.hvp(self.get_loss, (mu, sigma), (cur_estimate, torch.zeros_like(cur_estimate)))[1][0]
                 cur_estimate = [a + (1 - damping) * b - c / scale for (a, b, c) in zip(v, cur_estimate, hvp)]
                 cur_estimate = torch.squeeze(torch.stack(cur_estimate))  # .view(1, -1)
                 numpy_est = cur_estimate.detach().cpu().numpy()
@@ -209,9 +209,11 @@ class influence_wrapper:
                 self.pointer = i
                 train_grad = torch.autograd.grad(self.get_loss(mu, sigma), mu)[0]
                 i_up_loss.append((test_grad.view(1, -1) @ self.LiSSA(torch.autograd.functional.hvp(self.get_train_loss,
-                                                                                       (mu, sigma), (train_grad))[1], mu).view(-1, 1)).detach().cpu().numpy()[0][0])
+                                                                                       (mu, sigma), (train_grad, torch.zeros_like(train_grad)))[1][0], mu, sigma).view(-1, 1)).detach().cpu().numpy()[0][0])
         else:
             H = self.get_hessian(mu, sigma)
+            if torch.det(H) == 0:
+                H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
             H_inv = torch.inverse(H)
             for i in idx:
                 self.pointer = i

@@ -18,6 +18,12 @@ def main():
     spearman_nol2 = np.abs([np.load('figure1_nol2_selu/det_' + str(i) + 'l_spearman.npy') for i in layers])
     eig_nol2 = [np.load('figure1_nol2_selu/det_' + str(i) + 'l_eig.npy') for i in layers]
 
+    vdp_layers = [1, 2, 3, 6, 7, 8]
+    train_vdp = [np.load('figure1_vdp_tanh/vdp_' + str(i) + 'l_train.npy') for i in vdp_layers]
+    pearson_vdp = np.abs([np.load('figure1_vdp_tanh/vdp_' + str(i) + 'l_pearson.npy') for i in vdp_layers])
+    spearman_vdp = np.abs([np.load('figure1_vdp_tanh/vdp_' + str(i) + 'l_spearman.npy') for i in vdp_layers])
+    eig_vdp = [np.load('figure1_vdp_tanh/vdp_' + str(i) + 'l_eig.npy') for i in vdp_layers]
+
     [sns.kdeplot(s, shade=False) for s in pearson]
     plt.legend(['1', '2', '3', '4', '5', '6', '7', '8'])
     plt.xlabel('Pearson Correlation')
