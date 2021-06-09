@@ -46,10 +46,10 @@ class Model(torch.nn.Module):
     def __init__(self, n_feats, n_nodes, n_classes):
         super(Model, self).__init__()
         self.lin1 = vdp.Linear(n_feats, n_nodes, input_flag=True)
-        self.lin2 = vdp.Linear(n_nodes, n_classes)
-        self.lin3 = vdp.Linear(n_nodes, n_classes)
-        self.lin4 = vdp.Linear(n_nodes, n_classes)
-        self.lin5 = vdp.Linear(n_nodes, n_classes)
+        self.lin2 = vdp.Linear(n_nodes, n_nodes)
+        self.lin3 = vdp.Linear(n_nodes, n_nodes)
+        self.lin4 = vdp.Linear(n_nodes, n_nodes)
+        self.lin5 = vdp.Linear(n_nodes, n_nodes)
         self.lin_last = vdp.Linear(n_nodes, n_classes)
         self.softmax = vdp.Softmax()
         self.relu = vdp.SELU()
@@ -96,7 +96,7 @@ class Model(torch.nn.Module):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=0.005)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=500, verbose=False)
         for epoch in range(no_epochs):
             optimizer.zero_grad()
@@ -350,7 +350,8 @@ def main(n_iters):
             approx_loss_diff = approx_difference(model, top_train, max_loss)
             p = pearsonr(exact_loss_diff, approx_loss_diff)
             s = spearmanr(exact_loss_diff, approx_loss_diff)
-        except Exception:
+        except Exception as e:
+            print(e)
             continue
         train.append(train_acc)
         eig.append(top_eig)

@@ -2,64 +2,98 @@ import os
 import time
 import torch
 import numpy as np
+import torch.nn.functional as F
 from pyhessian import hessian
-import matplotlib.pyplot as plt
-from sklearn.datasets import load_iris
-from sklearn.metrics import accuracy_score
+from torchvision.datasets import MNIST
+from torch.utils.data import DataLoader, Dataset
 from scipy.stats import pearsonr, spearmanr
-from sklearn.model_selection import LeaveOneOut
-from sklearn.preprocessing import StandardScaler
 
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = '5'
+
+
+class data_loader(Dataset):
+    def __init__(self, X, y):
+        self.X = X
+        self.y = y
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, index):
+        target = self.y[index]
+        data_val = self.X[index, :]
+        return data_val, target
 
 
 class Model(torch.nn.Module):
-    def __init__(self, n_feats, n_nodes, n_classes):
+    def __init__(self):
         super(Model, self).__init__()
-        self.lin1 = torch.nn.Linear(n_feats, n_nodes)
-        # self.lin2 = torch.nn.Linear(n_nodes, n_nodes)
-        self.lin_last = torch.nn.Linear(n_nodes, n_classes)
-        self.relu = torch.nn.ReLU()
-        self.tanh = torch.nn.Tanh()
+        self.conv1 = torch.nn.Conv2d(1, 6, 5)
+        self.conv2 = torch.nn.Conv2d(6, 16, 5)
+        self.fc1 = torch.nn.Linear(256, 120)  # 5*5 from image dimension
+        self.fc2 = torch.nn.Linear(120, 84)
+        self.fc3 = torch.nn.Linear(84, 10)
 
     def forward(self, x):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
         if not torch.is_tensor(x):
             x = torch.tensor(x, requires_grad=True, device=device, dtype=torch.float32)
-        x = self.tanh(self.lin1(x))
-        # x = self.relu(self.lin2(x))
-        x = self.lin_last(x)
+        if x.device.type != device:
+            x = x.to(device)
+        # Max pooling over a (2, 2) window
+        x = F.max_pool2d(F.relu(self.conv1(x)), (2, 2))
+        # If the size is a square, you can specify with a single number
+        x = F.max_pool2d(F.relu(self.conv2(x)), 2)
+        x = torch.flatten(x, 1)  # flatten all dimensions except the batch dimension
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
         return x
+
 
     def bottleneck(self, x):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
         if not torch.is_tensor(x):
             x = torch.tensor(x, requires_grad=True, device=device, dtype=torch.float32)
-        x = self.relu(self.lin1(x))
-        # x = self.relu(self.lin2(x))
+        if x.device.type != device:
+            x = x.to(device)
+        x = self.pool(self.relu(self.conv1(x)))
+        x = self.pool(self.relu(self.conv2(x)))
+        x = torch.flatten(x, 1)
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
         return x
 
     def fit(self, x, y, no_epochs=1000):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
+        dataloader = DataLoader(data_loader(x, y), 1000, shuffle=True, num_workers=2, pin_memory=True)
         criterion = torch.nn.CrossEntropyLoss()
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=0.005)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3, weight_decay=0.001)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=100, verbose=False)
         for epoch in range(no_epochs):
-            optimizer.zero_grad()
-            logits = self.forward(x)
-            loss = criterion(logits, y)
-            loss.backward()
-            optimizer.step()
-            scheduler.step(loss.item())
+            for idx, (x, y) in enumerate(dataloader):
+                if x.device.type != device or y.device.type != device:
+                    x, y = x.to(device), y.to(device)
+                optimizer.zero_grad()
+                logits = self.forward(x)
+                loss = criterion(logits, y)
+                loss.backward()
+                optimizer.step()
+                scheduler.step(loss.item())
+            # if epoch % 100 == 0 or epoch == no_epochs-1:
+            #     print('{}/{} '.format(epoch, no_epochs))
+
 
     def score(self, x, y):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
+        if x.device.type != device or y.device.type != device:
+            x, y = x.to(device), y.to(device)
         logits = torch.nn.functional.softmax(self.forward(x), dim=1)
         score = torch.sum(torch.argmax(logits, dim=1) == y)/len(x)
         return score.cpu().numpy()
@@ -68,6 +102,8 @@ class Model(torch.nn.Module):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
+        if x.device.type != device or y.device.type != device:
+            x, y = x.to(device), y.to(device)
         criterion = torch.nn.CrossEntropyLoss(reduction='none')
         logits = self.forward(x)
         loss = criterion(logits, y)
@@ -85,7 +121,7 @@ class influence_wrapper:
 
     def get_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
-        logits = self.model.bottleneck(self.x_train[self.pointer].reshape(1, -1))
+        logits = self.model.bottleneck(self.x_train[self.pointer].unsqueeze(0))
         logits = logits @ weights.T
         loss = criterion(logits, torch.tensor([self.y_train[self.pointer]], device=self.device))
         return loss
@@ -99,7 +135,7 @@ class influence_wrapper:
 
     def get_test_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
-        logits = self.model.bottleneck(self.x_test.reshape(1, -1))
+        logits = self.model.bottleneck(self.x_test)
         logits = logits @ weights.T
         loss = criterion(logits, torch.tensor(self.y_test, device=self.device))
         return loss
@@ -118,62 +154,46 @@ class influence_wrapper:
     def LiSSA(self, v, weights):
         count = 0
         cur_estimate = v
-        damping = 0
+        damping = 0.01
         scale = 10
         num_samples = len(self.x_train)
+        ihvp = None
+        # for i in range(len(self.x_train)):
+        #     self.pointer = i
         prev_norm = 1
         diff = prev_norm
-        ihvp = None
-        for i in range(len(self.x_train)):
-            self.pointer = i
-            while diff > 0.00001 and count < 10000:
-                hvp = torch.autograd.functional.hvp(self.get_train_loss, weights, cur_estimate)[1]
-                cur_estimate = [a + (1 - damping) * b - c / scale for (a, b, c) in zip(v, cur_estimate, hvp)]
-                cur_estimate = torch.squeeze(torch.stack(cur_estimate))  # .view(1, -1)
-                numpy_est = cur_estimate.detach().cpu().numpy()
-                numpy_est = numpy_est.reshape(1, -1)
-                count += 1
-                diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
-                prev_norm = np.linalg.norm(np.concatenate(numpy_est))
-            if ihvp is None:
-                ihvp = [b/scale for b in cur_estimate]
-            else:
-                ihvp = [a + b/scale for (a, b) in zip(ihvp, cur_estimate)]
+        while diff > 0.00001 and count < 10000:
+            hvp = torch.autograd.functional.hvp(self.get_train_loss, weights, cur_estimate)[1]
+            cur_estimate = [a + (1 - damping) * b - c / scale for (a, b, c) in zip(v, cur_estimate, hvp)]
+            cur_estimate = torch.squeeze(torch.stack(cur_estimate))  # .view(1, -1)
+            numpy_est = cur_estimate.detach().cpu().numpy()
+            numpy_est = numpy_est.reshape(1, -1)
+            count += 1
+            diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
+            prev_norm = np.linalg.norm(np.concatenate(numpy_est))
+        if ihvp is None:
+            ihvp = [b/scale for b in cur_estimate]
+        else:
+            ihvp = [a + b/scale for (a, b) in zip(ihvp, cur_estimate)]
         ihvp = torch.squeeze(torch.stack(ihvp))
         ihvp = [a / num_samples for a in ihvp]
         ihvp = torch.squeeze(torch.stack(ihvp))
         return ihvp.detach()
 
-    def i_up_params(self, weights, idx, estimate=False):
-        i_up_params = list()
-        if estimate:
-            for i in idx:
-                self.pointer = i
-                grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
-                i_up_params.append(self.LiSSA(torch.autograd.functional.hvp(self.get_train_loss, weights, grad)[1], weights).detach().cpu().numpy())
-        else:
-            H = self.get_hessian(self.model.lin_last.weight)
-            H_inv = torch.inverse(H)
-            for i in idx:
-                self.pointer = i
-                grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
-                orig_shape = grad.shape
-                i_up_params.append((H_inv @ grad.float().view(-1, 1)).view(orig_shape).detach().cpu().numpy())
-        return i_up_params
-
-    def i_up_loss(self, weights, idx, estimate=False):
+    def i_up_loss(self, weights, estimate=False):
         i_up_loss = list()
         test_grad = torch.autograd.grad(self.get_test_loss(weights), weights)[0]
         if estimate:
-            for i in idx:
+            ihvp = self.LiSSA(test_grad, weights)
+            for i in range(len(self.x_train)):
                 self.pointer = i
                 train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
-                i_up_loss.append((test_grad.view(1, -1) @ self.LiSSA(torch.autograd.functional.hvp(self.get_train_loss,
-                                                                                       weights, train_grad)[1], weights).view(-1, 1)).detach().cpu().numpy()[0][0])
+                i_up_loss.append((-ihvp.view(1, -1) @ train_grad.view(-1, 1)).item())
         else:
             H = self.get_hessian(weights)
+            H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
             H_inv = torch.inverse(H)
-            for i in idx:
+            for i in range(len(self.x_train)):
                 self.pointer = i
                 train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
                 i_up_loss.append((test_grad.view(1, -1) @ (H_inv @ train_grad.float().view(-1, 1))).item())
@@ -190,147 +210,118 @@ def get_hessian_info(model, x, y):
     return top_eigenvalues[-1]
 
 
-def find_max_loss():
-    x, y = load_iris(return_X_y=True)
-    loo = LeaveOneOut()
-    train_acc, test_loss, y_pred = list(), list(), list()
-    for train_index, test_index in loo.split(x):
-        x_train, x_test = x[train_index], x[test_index]
-        y_train, y_test = y[train_index], y[test_index]
-        scaler = StandardScaler().fit(x_train)
-        x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
-        model = Model(x.shape[1], 8, 3).to('cuda:0')
-        model.fit(x_train, y_train)
-        train_acc.append(model.score(x_train, y_train))
-        test_loss.append(model.get_indiv_loss(x_test, y_test))
-        y_pred.append(torch.argmax(torch.nn.functional.softmax(model(x_test), dim=1)).item())
-    train_acc = np.mean(train_acc)
-    test_acc = accuracy_score(y, y_pred)
+def train_model():
+    mnist_train = MNIST('/data/', train=True, download=False)
+    mnist_test = MNIST('/data/', train=False, download=False)
+    x_train, y_train = mnist_train.data.view(60000, 1, 28, 28)/255.0, mnist_train.targets
+    x_test, y_test = mnist_test.data.view(10000, 1, 28, 28)/255.0, mnist_test.targets
+    model = Model().to('cuda:0')
+    model.fit(x_train, y_train, 500)
+    train_acc = model.score(x_train, y_train)
+    test_loss = model.get_indiv_loss(x_test, y_test)
+    test_acc = model.score(x_test, y_test)
     max_loss = np.argmax(test_loss)
-    return max_loss, train_acc, test_acc
+    med_loss = np.argsort(test_loss)[len(test_loss)//2]
+    torch.save(model.state_dict(), 'det_small_cnn.pt')
+    return model, (med_loss, max_loss), (train_acc, test_acc)
 
 
-def find_top_train(max_loss=83):
-    x, y = load_iris(return_X_y=True)
-    train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
-    test_index = np.asarray([max_loss])
-    x_train, x_test = x[train_index], x[test_index]
-    y_train, y_test = y[train_index], y[test_index]
-    scaler = StandardScaler().fit(x_train)
-    x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
-    model = Model(x.shape[1], 8, 3).to('cuda:0')
-    model.fit(x_train, y_train, 60000)
-    train_loss = model.get_indiv_loss(x_train, y_train)
-    to_look = int(1/6 * len(x-1))
-    top_train = np.argsort(train_loss)[::-1][:to_look]
-    top_eig = get_hessian_info(model, x_train, y_train)
-    torch.save(model.state_dict(), 'loo_params.pt')
-    return top_train, model, top_eig
+def approx_difference(model, test_idx):
+    med_loss = test_idx[0]
+    max_loss = test_idx[1]
+    model.load_state_dict(torch.load('det_small_cnn.pt'))
+    mnist_train = MNIST('/data/', train=True, download=False)
+    mnist_test = MNIST('/data/', train=False, download=False)
+    x_train, y_train = mnist_train.data.view(60000, 1, 28, 28)/255.0, mnist_train.targets
+    x_test, y_test = mnist_test.data.view(10000, 1, 28, 28)/255.0, mnist_test.targets
 
-
-def exact_difference(model, top_train, max_loss):
-    exact_parameter_diff = list()
-    exact_loss_diff = list()
-    true_parameters = model.lin_last.weight.detach().cpu().numpy()
-    x, y = load_iris(return_X_y=True)
-    train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
-    test_index = np.asarray([max_loss])
-    x_train, x_test = x[train_index], x[test_index]
-    y_train, y_test = y[train_index], y[test_index]
-    scaler = StandardScaler().fit(x_train)
-    x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
-    true_loss = model.get_indiv_loss(x_test, y_test)
-    for i in top_train:
-        x, y = load_iris(return_X_y=True)
-        train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
-        test_index = np.asarray([max_loss])
-        x_train, x_test = x[train_index], x[test_index]
-        y_train, y_test = y[train_index], y[test_index]
-        scaler = StandardScaler().fit(x_train)
-        x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
-        x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
-        # model = Model(x.shape[1], 8, 3).to('cuda:0')
-        model.load_state_dict(torch.load('loo_params.pt'))
-        model.fit(x_train, y_train, 7500)
-        # exact_parameter_diff.append(model.lin_last.weight.detach().cpu().numpy() - true_parameters)
-        exact_loss_diff.append(model.get_indiv_loss(x_test, y_test) - true_loss)
-    exact_parameter_diff = [np.linalg.norm(diff, ord=2) for diff in exact_parameter_diff]
-    return exact_loss_diff#, exact_parameter_diff
-
-
-def approx_difference(model, top_train, max_loss):
-    model.load_state_dict(torch.load('loo_params.pt'))
-    x, y = load_iris(return_X_y=True)
-    train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
-    test_index = np.asarray([max_loss])
-    x_train, x_test = x[train_index], x[test_index]
-    y_train, y_test = y[train_index], y[test_index]
-    scaler = StandardScaler().fit(x_train)
-    x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
+    test_index = np.asarray([med_loss])
+    x_test, y_test = x_test[test_index], y_test[test_index]
     infl = influence_wrapper(model, x_train, y_train, x_test, y_test)
-    # approx_parameter_diff = -1 / len(x_train) * np.asarray(infl.i_up_params(model.lin_last.weight, top_train, estimate=True))
-    # approx_parameter_diff = [np.linalg.norm(diff, ord=2) for diff in approx_parameter_diff]
-    approx_loss_diff = np.asarray(infl.i_up_loss(model.lin_last.weight, top_train, estimate=True))
-    return approx_loss_diff#, approx_parameter_diff
+    approx_loss_diff_med = np.asarray(infl.i_up_loss(model.lin_last.weight, estimate=True))
+    to_look = 40
+    top_train_med = np.argsort(approx_loss_diff_med)[::-1][:to_look]
+
+    mnist_train = MNIST('/data/', train=True, download=False)
+    mnist_test = MNIST('/data/', train=False, download=False)
+    x_train, y_train = mnist_train.data.view(60000, 1, 28, 28)/255.0, mnist_train.targets
+    x_test, y_test = mnist_test.data.view(10000, 1, 28, 28)/255.0, mnist_test.targets
+    test_index = np.asarray([max_loss])
+    x_test, y_test = x_test[test_index], y_test[test_index]
+    infl = influence_wrapper(model, x_train, y_train, x_test, y_test)
+    approx_loss_diff_max = np.asarray(infl.i_up_loss(model.lin_last.weight, estimate=True))
+    to_look = 40
+    top_train_max = np.argsort(approx_loss_diff_max)[::-1][:to_look]
+    return approx_loss_diff_med[top_train_med], approx_loss_diff_max[top_train_max], top_train_med, top_train_max
+
+
+def exact_difference(model, top_train, test_idx):
+    top_train_med = top_train[0]
+    top_train_max = top_train[1]
+    med_loss = test_idx[0]
+    max_loss = test_idx[1]
+    exact_loss_diff_med, exact_loss_diff_max = list(), list()
+    mnist_test = MNIST('/data/', train=False, download=False)
+    x_test, y_test = mnist_test.data.view(10000, 1, 28, 28)/255.0, mnist_test.targets
+    test_index = np.asarray([med_loss])
+    true_loss_med = model.get_indiv_loss(x_test[test_index], y_test[test_index])
+    test_index = np.asarray([max_loss])
+    true_loss_max = model.get_indiv_loss(x_test[test_index], y_test[test_index])
+    for i in top_train_med:
+        mnist_train = MNIST('/data/', train=True, download=False)
+        mnist_test = MNIST('/data/', train=False, download=False)
+        x_train, y_train = mnist_train.data.view(60000, 1, 28, 28) / 255.0, mnist_train.targets
+        x_test, y_test = mnist_test.data.view(10000, 1, 28, 28) / 255.0, mnist_test.targets
+        test_index = np.asarray([max_loss])
+        x_test, y_test = x_test[test_index], y_test[test_index]
+        x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
+        model.load_state_dict(torch.load('det_small_cnn.pt'))
+        model.fit(x_train, y_train, 30)
+        exact_loss_diff_med.append(model.get_indiv_loss(x_test, y_test) - true_loss_med)
+    for i in top_train_max:
+        mnist_train = MNIST('/data/', train=True, download=False)
+        mnist_test = MNIST('/data/', train=False, download=False)
+        x_train, y_train = mnist_train.data.view(60000, 1, 28, 28) / 255.0, mnist_train.targets
+        x_test, y_test = mnist_test.data.view(10000, 1, 28, 28) / 255.0, mnist_test.targets
+        test_index = np.asarray([max_loss])
+        x_test, y_test = x_test[test_index], y_test[test_index]
+        x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
+        model.load_state_dict(torch.load('det_small_cnn.pt'))
+        model.fit(x_train, y_train, 30)
+        exact_loss_diff_max.append(model.get_indiv_loss(x_test, y_test) - true_loss_max)
+    return exact_loss_diff_med, exact_loss_diff_max
+
+
+
 
 
 def main():
-    outer_start_time = time.time()
-    train, test, eig, pearson, spearman = list(), list(), list(), list(), list()
+    train, test, pearson, spearman = list(), list(), list(), list()
     for i in range(5):
         start_time = time.time()
-        max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
-        print('Done max loss')
-        top_train, model, top_eig = find_top_train()
-        print('Done top train')
-        exact_loss_diff = exact_difference(model, top_train, max_loss)
+        model, (med_loss, max_loss), (train_acc, test_acc) = train_model()
+        print('Done training')
+        approx_loss_diff_med, approx_loss_diff_max, top_train_med, top_train_max = approx_difference(model, (med_loss, max_loss))
+        print('Done approx')
+        exact_loss_diff_med, exact_loss_diff_max = exact_difference(model, (top_train_med, top_train_max), (med_loss, max_loss))
         print('Done Exact Diff')
-        approx_loss_diff = approx_difference(model, top_train, max_loss)
+
         train.append(train_acc)
         test.append(test_acc)
-        eig.append(top_eig)
-        pearson.append(pearsonr(exact_loss_diff, approx_loss_diff))
-        spearman.append(spearmanr(exact_loss_diff, approx_loss_diff))
+
+        max_pearson = pearsonr(exact_loss_diff_max, approx_loss_diff_max)
+        max_spearman = spearmanr(exact_loss_diff_max, approx_loss_diff_max)
+        med_pearson = pearsonr(exact_loss_diff_med, approx_loss_diff_med)
+        med_spearman = spearmanr(exact_loss_diff_med, approx_loss_diff_med)
         print('Done {}/{} in {:.2f} minutes'.format(i+1, 10, (time.time()-start_time)/60))
         print(train)
         print(test)
-        print(pearson)
-        print(spearman)
-        print(eig)
-    # np.save('figure1/det_1l_l2_approx_train.npy', train)
-    # np.save('figure1/det_1l_l2_approx_test.npy', test)
-    # np.save('figure1/det_1l_l2_approx_eig.npy', eig)
-    # np.save('figure1/det_1l_l2_approx_pearson.npy', pearson)
-    # np.save('figure1/det_1l_l2_approx_spearman.npy', spearman)
-    # print('Finished Iter in {:.2f} minutes'.format((time.time()-outer_start_time)/60))
-    #     plt.plot(exact_parameter_diff, exact_parameter_diff, 'r')
-    #     plt.scatter(exact_parameter_diff, approx_parameter_diff)
-    #     plt.xlabel('Norm of Exact Parameter Change')
-    #     plt.ylabel('Norm of Approximate Parameter Change')
-        # plt.xlim(min(exact_parameter_diff), max(exact_parameter_diff))
-        # plt.ylim(min(exact_parameter_diff), max(exact_parameter_diff))
-        # plt.show()
-        # print('Train/Test Accuracy: {:.2f}/{:.2f}'.format(train_acc, test_acc))
-        # print('Pearson: {:.2f}'.format(pearson))
-        # print('Spearman: {:.2f}'.format(spearman))
-    pass
+        print(max_pearson)
+        print(max_spearman)
+        print(med_pearson)
+        print(med_spearman)
+        pass
 
 
 if __name__ == '__main__':
     main()
-
-# Train/Test Accuracy: 0.97/0.97
-# Pearson: 1.00
-# Spearman: 0.86
-
-# [0.9725726]
-# [0.9666666666666667]
-# [0.6113434398393797]
-# [0.6176923076923077]
-# [1.4167283773422241]
-
-# [0.9732886]
-# [0.9533333333333334]
-# [-0.16284023723086935]
-# [0.04230769230769231]
-# [1.2044204473495483]

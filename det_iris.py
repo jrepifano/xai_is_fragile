@@ -30,7 +30,7 @@ class Model(torch.nn.Module):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
         if not torch.is_tensor(x):
             x = torch.tensor(x, requires_grad=True, device=device, dtype=torch.float32)
-        x = self.tanh(self.lin1(x))
+        x = self.relu(self.lin1(x))
         # x = self.relu(self.lin2(x))
         x = self.lin_last(x)
         return x
@@ -163,19 +163,19 @@ class influence_wrapper:
                 i_up_params.append((H_inv @ grad.float().view(-1, 1)).view(orig_shape).detach().cpu().numpy())
         return i_up_params
 
-    def i_up_loss(self, weights, idx, estimate=False):
+    def i_up_loss(self, weights, estimate=False):
         i_up_loss = list()
         test_grad = torch.autograd.grad(self.get_test_loss(weights), weights)[0]
         if estimate:
-            for i in idx:
+            ihvp = self.LiSSA(test_grad, weights)
+            for i in range(len(self.x_train)):
                 self.pointer = i
                 train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
-                i_up_loss.append((test_grad.view(1, -1) @ self.LiSSA(torch.autograd.functional.hvp(self.get_train_loss,
-                                                                                       weights, train_grad)[1], weights).view(-1, 1)).detach().cpu().numpy()[0][0])
+                i_up_loss.append((-ihvp.view(1, -1) @ train_grad.view(-1, 1)).item())
         else:
             H = self.get_hessian(weights)
             H_inv = torch.inverse(H)
-            for i in idx:
+            for i in range(len(self.x_train)):
                 self.pointer = i
                 train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
                 i_up_loss.append((test_grad.view(1, -1) @ (H_inv @ train_grad.float().view(-1, 1))).item())
@@ -201,7 +201,7 @@ def find_max_loss():
         y_train, y_test = y[train_index], y[test_index]
         scaler = StandardScaler().fit(x_train)
         x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
-        model = Model(x.shape[1], 8, 3).to('cuda:0')
+        model = Model(x.shape[1], 5, 3).to('cuda:0')
         model.fit(x_train, y_train)
         train_acc.append(model.score(x_train, y_train))
         test_loss.append(model.get_indiv_loss(x_test, y_test))
@@ -212,7 +212,7 @@ def find_max_loss():
     return max_loss, train_acc, test_acc
 
 
-def find_top_train(max_loss=83):
+def train_model(max_loss=83):
     x, y = load_iris(return_X_y=True)
     train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
     test_index = np.asarray([max_loss])
@@ -220,14 +220,11 @@ def find_top_train(max_loss=83):
     y_train, y_test = y[train_index], y[test_index]
     scaler = StandardScaler().fit(x_train)
     x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
-    model = Model(x.shape[1], 8, 3).to('cuda:0')
+    model = Model(x.shape[1], 5, 3).to('cuda:0')
     model.fit(x_train, y_train, 60000)
-    train_loss = model.get_indiv_loss(x_train, y_train)
-    to_look = int(1/6 * len(x-1))
-    top_train = np.argsort(train_loss)[::-1][:to_look]
     top_eig = get_hessian_info(model, x_train, y_train)
     torch.save(model.state_dict(), 'loo_params.pt')
-    return top_train, model, top_eig
+    return model, top_eig
 
 
 def exact_difference(model, top_train, max_loss):
@@ -251,7 +248,7 @@ def exact_difference(model, top_train, max_loss):
         scaler = StandardScaler().fit(x_train)
         x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
         x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
-        model = Model(x.shape[1], 8, 3).to('cuda:0')
+        model = Model(x.shape[1], 5, 3).to('cuda:0')
         model.load_state_dict(torch.load('loo_params.pt'))
         model.fit(x_train, y_train, 7500)
         # exact_parameter_diff.append(model.lin_last.weight.detach().cpu().numpy() - true_parameters)
@@ -260,7 +257,7 @@ def exact_difference(model, top_train, max_loss):
     return exact_loss_diff#, exact_parameter_diff
 
 
-def approx_difference(model, top_train, max_loss):
+def approx_difference(model, max_loss):
     model.load_state_dict(torch.load('loo_params.pt'))
     x, y = load_iris(return_X_y=True)
     train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
@@ -270,10 +267,10 @@ def approx_difference(model, top_train, max_loss):
     scaler = StandardScaler().fit(x_train)
     x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
     infl = influence_wrapper(model, x_train, y_train, x_test, y_test)
-    # approx_parameter_diff = -1 / len(x_train) * np.asarray(infl.i_up_params(model.lin_last.weight, top_train, estimate=True))
-    # approx_parameter_diff = [np.linalg.norm(diff, ord=2) for diff in approx_parameter_diff]
-    approx_loss_diff = np.asarray(infl.i_up_loss(model.lin_last.weight, top_train, estimate=True))
-    return approx_loss_diff#, approx_parameter_diff
+    approx_loss_diff = np.asarray(infl.i_up_loss(model.lin_last.weight, estimate=True))
+    to_look = int(1/6 * len(x-1))
+    top_train = np.argsort(approx_loss_diff)[::-1][:to_look]
+    return approx_loss_diff[top_train], top_train
 
 
 def main():
@@ -284,11 +281,12 @@ def main():
         # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
         # print('Done max loss')
         max_loss = 83
-        top_train, model, top_eig = find_top_train()
-        # print('Done top train')
-        # exact_loss_diff = exact_difference(model, top_train, max_loss)
+        model, top_eig = train_model()
+        print('Done training')
+        approx_loss_diff, top_train = approx_difference(model, max_loss)
+        print('Done approx diff')
+        exact_loss_diff = exact_difference(model, top_train, max_loss)
         print('Done Exact Diff')
-        approx_loss_diff = approx_difference(model, top_train, max_loss)
         # train.append(train_acc)
         # test.append(test_acc)
         eig.append(top_eig)
