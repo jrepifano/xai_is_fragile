@@ -1,5 +1,7 @@
 import os
+import vdp
 import time
+import math
 import torch
 import numpy as np
 import torch.nn.functional as F
@@ -10,8 +12,32 @@ from scipy.stats import pearsonr, spearmanr
 
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
+
+def orderOfMagnitude(number):
+    return math.floor(math.log(number, 10))
+
+
+def scale_hyperp(log_det, nll, kl):
+    # Find the alpha scaling factor
+    lli_power = orderOfMagnitude(nll)
+    ldi_power = orderOfMagnitude(log_det)
+    alpha = 10**(lli_power - ldi_power - 2)     # log_det_i needs to be 1 less power than log_likelihood_i
+
+    beta = list()
+    # Find scaling factor for each kl term
+    kl = [i.item() for i in kl]
+    smallest_power = orderOfMagnitude(np.min(kl))
+    for i in range(len(kl)):
+        power = orderOfMagnitude(kl[i])
+        power = smallest_power-power
+        beta.append(10.0**power)
+
+    # Find the tau scaling factor
+    tau = 10**(smallest_power - lli_power - 1)
+
+    return alpha, beta, tau
 
 class data_loader(Dataset):
     def __init__(self, X, y):
@@ -30,11 +56,18 @@ class data_loader(Dataset):
 class Model(torch.nn.Module):
     def __init__(self):
         super(Model, self).__init__()
-        self.conv1 = torch.nn.Conv2d(1, 6, 5)
-        self.conv2 = torch.nn.Conv2d(6, 16, 5)
-        self.fc1 = torch.nn.Linear(256, 120)  # 5*5 from image dimension
-        self.fc2 = torch.nn.Linear(120, 84)
-        self.lin_last = torch.nn.Linear(84, 10)
+        self.conv1 = vdp.Conv2d(1, 6, 5, input_flag=True)
+        self.conv2 = vdp.Conv2d(6, 16, 5)
+        self.pool = vdp.MaxPool2d(2, 2)
+        self.fc1 = vdp.Linear(256, 120)  # 5*5 from image dimension
+        self.fc2 = vdp.Linear(120, 84)
+        self.lin_last = vdp.Linear(84, 10)
+        self.relu = vdp.ReLU()
+        self.softmax = vdp.Softmax()
+        self.scale = False
+        self.alpha = 0.1
+        self.beta = [1 for layer in self.children() if hasattr(layer, 'kl_term')]
+        self.tau = 0.01
 
     def forward(self, x):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
@@ -42,15 +75,18 @@ class Model(torch.nn.Module):
             x = torch.tensor(x, requires_grad=True, device=device, dtype=torch.float32)
         if x.device.type != device:
             x = x.to(device)
-        # Max pooling over a (2, 2) window
-        x = F.max_pool2d(F.relu(self.conv1(x)), (2, 2))
-        # If the size is a square, you can specify with a single number
-        x = F.max_pool2d(F.relu(self.conv2(x)), 2)
-        x = torch.flatten(x, 1)  # flatten all dimensions except the batch dimension
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.lin_last(x)
-        return x
+        mu, sigma = self.conv1(x)
+        mu, sigma = self.relu(mu, sigma)
+        mu, sigma = self.pool(mu, sigma)
+        mu, sigma = self.conv2(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
+        mu, sigma = self.pool(mu, sigma)
+        mu, sigma = torch.flatten(mu, 1), torch.flatten(sigma, 1)
+        mu, sigma = self.fc1(mu, sigma)
+        mu, sigma = self.fc2(mu, sigma)
+        mu, sigma = self.lin_last(mu, sigma)
+        mu, sigma = self.softmax(mu, sigma)
+        return mu, sigma
 
 
     def bottleneck(self, x):
@@ -59,30 +95,36 @@ class Model(torch.nn.Module):
             x = torch.tensor(x, requires_grad=True, device=device, dtype=torch.float32)
         if x.device.type != device:
             x = x.to(device)
-        # Max pooling over a (2, 2) window
-        x = F.max_pool2d(F.relu(self.conv1(x)), (2, 2))
-        # If the size is a square, you can specify with a single number
-        x = F.max_pool2d(F.relu(self.conv2(x)), 2)
-        x = torch.flatten(x, 1)  # flatten all dimensions except the batch dimension
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        return x
+        mu, sigma = self.conv1(x)
+        mu, sigma = self.relu(mu, sigma)
+        mu, sigma = self.pool(mu, sigma)
+        mu, sigma = self.conv2(mu, sigma)
+        mu, sigma = self.relu(mu, sigma)
+        mu, sigma = self.pool(mu, sigma)
+        mu, sigma = torch.flatten(mu, 1), torch.flatten(sigma, 1)
+        mu, sigma = self.fc1(mu, sigma)
+        mu, sigma = self.fc2(mu, sigma)
+        return mu, sigma
 
     def fit(self, x, y, no_epochs=1000):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
-        dataloader = DataLoader(data_loader(x, y), 10000, shuffle=True, num_workers=2, pin_memory=True)
-        criterion = torch.nn.CrossEntropyLoss()
-        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-2, weight_decay=0.001)
+        dataloader = DataLoader(data_loader(x, y), 1000, shuffle=True, num_workers=2, pin_memory=True)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3, amsgrad=True)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, verbose=True)
         for epoch in range(no_epochs):
             for idx, (x, y) in enumerate(dataloader):
                 if x.device.type != device or y.device.type != device:
                     x, y = x.to(device), y.to(device)
                 optimizer.zero_grad()
-                logits = self.forward(x)
-                loss = criterion(logits, y)
+                mu, sigma = self.forward(x)
+                log_det, nll = vdp.ELBOLoss(mu, sigma, y)
+                kl = vdp.gather_kl(self)
+                if not self.scale:
+                    self.alpha, self.beta, self.tau = scale_hyperp(log_det, nll, kl)
+                    self.scale = True
+                loss = self.alpha * log_det + nll + self.tau * torch.stack([a * b for a, b in zip(self.beta, kl)]).sum()
                 loss.backward()
                 optimizer.step()
             scheduler.step(loss.item())
@@ -97,9 +139,7 @@ class Model(torch.nn.Module):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
-        if x.device.type != device or y.device.type != device:
-            x, y = x.to(device), y.to(device)
-        logits = torch.nn.functional.softmax(self.forward(x), dim=1)
+        logits, sigma = self.forward(x)
         score = torch.sum(torch.argmax(logits, dim=1) == y)/len(x)
         return score.cpu().numpy()
 
@@ -107,11 +147,9 @@ class Model(torch.nn.Module):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
-        if x.device.type != device or y.device.type != device:
-            x, y = x.to(device), y.to(device)
         criterion = torch.nn.CrossEntropyLoss(reduction='none')
-        logits = self.forward(x)
-        loss = criterion(logits, y)
+        mu, sigma = self.forward(x)
+        loss = criterion(mu, y)
         return [l.item() for l in loss] if len(loss) > 1 else loss.item()
 
 
@@ -124,83 +162,98 @@ class influence_wrapper:
         self.model = model
         self.device = 'cuda:0' if next(self.model.parameters()).is_cuda else 'cpu'
 
-    def get_loss(self, weights):
-        criterion = torch.nn.CrossEntropyLoss()
-        logits = self.model.bottleneck(self.x_train[self.pointer].unsqueeze(0))
-        logits = logits @ weights.T
-        loss = criterion(logits, torch.tensor([self.y_train[self.pointer]], device=self.device))
+    def get_loss(self, mu, sigma):
+        mu_x, sigma_x = self.model.bottleneck(self.x_train[self.pointer].reshape(1, -1))
+        mu_y = mu_x @ mu.T
+        sigma_y = (vdp.softplus(sigma) @ sigma_x.T).T + \
+                  (mu ** 2 @ sigma_x.T).T + \
+                  (mu_x ** 2 @ vdp.softplus(sigma).T)
+        mu_y = torch.nn.functional.softmax(mu_y, dim=1)
+        J = mu_y*(1-mu_y)
+        sigma_y = (J**2) * sigma_y
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor([self.y_train[self.pointer]], device=self.device))#, self.model)
         return loss
 
-    def get_train_loss(self, weights):
-        criterion = torch.nn.CrossEntropyLoss()
-        logits = self.model.bottleneck(self.x_train)
-        logits = logits @ weights.T
-        loss = criterion(logits, torch.tensor(self.y_train, device=self.device))
+    def get_train_loss(self, mu, sigma):
+        mu_x, sigma_x = self.model.bottleneck(self.x_train)
+        mu_y = mu_x @ mu.T
+        sigma_y = (vdp.softplus(sigma) @ sigma_x.T).T + \
+                  (mu ** 2 @ sigma_x.T).T + \
+                  (mu_x ** 2 @ vdp.softplus(sigma).T)
+        mu_y = torch.nn.functional.softmax(mu_y, dim=1)
+        J = mu_y*(1-mu_y)
+        sigma_y = (J**2) * sigma_y
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_train, device=self.device))#, self.model)
         return loss
 
-    def get_test_loss(self, weights):
-        criterion = torch.nn.CrossEntropyLoss()
-        logits = self.model.bottleneck(self.x_test)
-        logits = logits @ weights.T
-        loss = criterion(logits, torch.tensor(self.y_test, device=self.device))
+    def get_test_loss(self, mu, sigma):
+        mu_x, sigma_x = self.model.bottleneck(self.x_test.reshape(1, -1))
+        mu_y = mu_x @ mu.T
+        sigma_y = (vdp.softplus(sigma) @ sigma_x.T).T + \
+                  (mu ** 2 @ sigma_x.T).T + \
+                  (mu_x ** 2 @ vdp.softplus(sigma).T)
+        mu_y = torch.nn.functional.softmax(mu_y, dim=1)
+        J = mu_y*(1-mu_y)
+        sigma_y = (J**2) * sigma_y
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_test, device=self.device))#, self.model)
         return loss
 
-    def get_hessian(self, weights):
-        dim_1, dim_2 = weights.shape[0], weights.shape[1]
+    def get_hessian(self, mu, sigma):
+        dim_1, dim_2 = mu.shape[0], mu.shape[1]
         H_i = torch.zeros((dim_1, dim_2, dim_1, dim_2), device=self.device)
         for i in range(len(self.x_train)):
             self.pointer = i
-            H_i += torch.autograd.functional.hessian(self.get_loss, weights, vectorize=True)
+            H_i += torch.autograd.functional.hessian(self.get_loss, (mu, sigma), vectorize=True)[0][0]
         H = H_i / len(self.x_train)
         square_size = int(np.sqrt(torch.numel(H)))
         H = H.view(square_size, square_size)
         return H
 
-    def LiSSA(self, v, weights):
+    def LiSSA(self, v, mu, sigma):
         count = 0
         cur_estimate = v
-        damping = 0.01
+        damping = 0
         scale = 10
         num_samples = len(self.x_train)
         ihvp = None
-        # for i in range(len(self.x_train)):
-        #     self.pointer = i
         prev_norm = 1
         diff = prev_norm
-        while diff > 0.00001 and count < 10000:
-            hvp = torch.autograd.functional.hvp(self.get_train_loss, weights, cur_estimate)[1]
-            cur_estimate = [a + (1 - damping) * b - c / scale for (a, b, c) in zip(v, cur_estimate, hvp)]
-            cur_estimate = torch.squeeze(torch.stack(cur_estimate))  # .view(1, -1)
-            numpy_est = cur_estimate.detach().cpu().numpy()
-            numpy_est = numpy_est.reshape(1, -1)
-            count += 1
-            diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
-            prev_norm = np.linalg.norm(np.concatenate(numpy_est))
-        if ihvp is None:
-            ihvp = [b/scale for b in cur_estimate]
-        else:
-            ihvp = [a + b/scale for (a, b) in zip(ihvp, cur_estimate)]
+        for i in range(len(self.x_train)):
+            self.pointer = i
+            while diff > 0.00001 and count < 10000:
+                hvp = torch.autograd.functional.hvp(self.get_train_loss, (mu, sigma), (cur_estimate, torch.zeros_like(cur_estimate)))[1][0]
+                cur_estimate = [a + (1 - damping) * b - c / scale for (a, b, c) in zip(v, cur_estimate, hvp)]
+                cur_estimate = torch.squeeze(torch.stack(cur_estimate))  # .view(1, -1)
+                numpy_est = cur_estimate.detach().cpu().numpy()
+                numpy_est = numpy_est.reshape(1, -1)
+                count += 1
+                diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
+                prev_norm = np.linalg.norm(np.concatenate(numpy_est))
+            if ihvp is None:
+                ihvp = [b/scale for b in cur_estimate]
+            else:
+                ihvp = [a + b/scale for (a, b) in zip(ihvp, cur_estimate)]
         ihvp = torch.squeeze(torch.stack(ihvp))
         ihvp = [a / num_samples for a in ihvp]
         ihvp = torch.squeeze(torch.stack(ihvp))
         return ihvp.detach()
 
-    def i_up_loss(self, weights, estimate=False):
+    def i_up_loss(self, mu, sigma, estimate=False):
         i_up_loss = list()
-        test_grad = torch.autograd.grad(self.get_test_loss(weights), weights)[0]
+        test_grad = torch.autograd.grad(self.get_test_loss(mu, sigma), mu)[0]
         if estimate:
-            ihvp = self.LiSSA(test_grad, weights)
+            ihvp = self.LiSSA(test_grad, mu, sigma)
             for i in range(len(self.x_train)):
                 self.pointer = i
-                train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
+                train_grad = torch.autograd.grad(self.get_loss(mu, sigma), mu)[0]
                 i_up_loss.append((-ihvp.view(1, -1) @ train_grad.view(-1, 1)).item())
         else:
-            H = self.get_hessian(weights)
-            H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
+            H = self.get_hessian(mu, sigma)
+            # H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
             H_inv = torch.inverse(H)
             for i in range(len(self.x_train)):
                 self.pointer = i
-                train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
+                train_grad = torch.autograd.grad(self.get_loss(mu, sigma), mu)[0]
                 i_up_loss.append((test_grad.view(1, -1) @ (H_inv @ train_grad.float().view(-1, 1))).item())
         return i_up_loss
 
@@ -209,7 +262,7 @@ def get_hessian_info(model, x, y):
     device = 'cuda:0' if next(model.parameters()).is_cuda else 'cpu'
     if not torch.is_tensor(x):
         x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = vdp.ELBOLoss_2
     hessian_comp = hessian(model, criterion, data=(x, y), cuda=True)
     top_eigenvalues, top_eigenvector = hessian_comp.eigenvalues()
     return top_eigenvalues[-1]

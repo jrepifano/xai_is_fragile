@@ -141,7 +141,7 @@ class Softmax(torch.nn.Module):
 
 
 def ELBOLoss(mu, sigma, y):
-    y_hot = torch.nn.functional.one_hot(y, num_classes=3)
+    y_hot = torch.nn.functional.one_hot(y, num_classes=10)
     sigma_clamped = torch.log(1+torch.exp(torch.clamp(sigma, 0, 88)))
     log_det = torch.mean(torch.log(torch.prod(sigma_clamped, dim=1)))
     nll = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))

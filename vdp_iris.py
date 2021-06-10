@@ -49,7 +49,7 @@ class Model(torch.nn.Module):
         # self.lin2 = vdp.Linear(n_nodes, n_nodes)
         self.lin_last = vdp.Linear(n_nodes, n_classes)
         self.softmax = vdp.Softmax()
-        self.relu = vdp.ReLU()
+        self.relu = vdp.Tanh()
         self.scale = False
         self.alpha = 0.1
         self.beta = [1 for layer in self.children() if hasattr(layer, 'kl_term')]
@@ -82,7 +82,7 @@ class Model(torch.nn.Module):
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=1000, verbose=False)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=100, verbose=False)
         for epoch in range(no_epochs):
             optimizer.zero_grad()
             mu, sigma = self.forward(x)
@@ -92,8 +92,8 @@ class Model(torch.nn.Module):
                 self.alpha, self.beta, self.tau = scale_hyperp(log_det, nll, kl)
                 self.scale = True
             loss = self.alpha * log_det + nll + self.tau * torch.stack([a * b for a, b in zip(self.beta, kl)]).sum()
-            if epoch % 10000 == 0:
-                print('Epoch {}/{}, Loss: {:.2f}, Train Acc: {:.2f}'.format(epoch+1, no_epochs, loss.item(), self.score(x, y)))
+            # if epoch % 10000 == 0:
+            #     print('Epoch {}/{}, Loss: {:.2f}, Train Acc: {:.2f}'.format(epoch+1, no_epochs, loss.item(), self.score(x, y)))
             loss.backward()
             optimizer.step()
             scheduler.step(loss.item())
@@ -134,7 +134,7 @@ class influence_wrapper:
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor([self.y_train[self.pointer]], device=self.device), self.model)
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor([self.y_train[self.pointer]], device=self.device))#, self.model)
         return loss
 
     def get_train_loss(self, mu, sigma):
@@ -146,19 +146,19 @@ class influence_wrapper:
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_train, device=self.device), self.model)
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_train, device=self.device))#, self.model)
         return loss
 
     def get_test_loss(self, mu, sigma):
         mu_x, sigma_x = self.model.bottleneck(self.x_test.reshape(1, -1))
-        mu_y = mu_x @ mu.T + self.model.lin_last.mu.bias
+        mu_y = mu_x @ mu.T
         sigma_y = (vdp.softplus(sigma) @ sigma_x.T).T + \
                   (mu ** 2 @ sigma_x.T).T + \
-                  (mu_x ** 2 @ vdp.softplus(sigma).T) + self.model.lin_last.sigma.bias
+                  (mu_x ** 2 @ vdp.softplus(sigma).T)
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_test, device=self.device), self.model)
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_test, device=self.device))#, self.model)
         return loss
 
     def get_hessian(self, mu, sigma):
@@ -212,8 +212,7 @@ class influence_wrapper:
                 i_up_loss.append((-ihvp.view(1, -1) @ train_grad.view(-1, 1)).item())
         else:
             H = self.get_hessian(mu, sigma)
-            if torch.det(H) == 0:
-                H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
+            # H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
             H_inv = torch.inverse(H)
             for i in range(len(self.x_train)):
                 self.pointer = i
