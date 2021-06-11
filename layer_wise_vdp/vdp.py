@@ -147,6 +147,7 @@ def ELBOLoss(mu, sigma, y):
     nll = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
     return log_det, nll
 
+
 def ELBOLoss_2(outputs, y, model=None):
     mu = outputs[0]
     sigma = outputs[1]

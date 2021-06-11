@@ -311,7 +311,7 @@ def approx_difference(model, max_loss):
     infl = influence_wrapper(model, x_train, y_train, x_test, y_test)
     # approx_parameter_diff = -1 / len(x_train) * np.asarray(infl.i_up_params(model.lin_last.weight, top_train, estimate=True))
     # approx_parameter_diff = [np.linalg.norm(diff, ord=2) for diff in approx_parameter_diff]
-    approx_loss_diff = np.asarray(infl.i_up_loss(model.lin_last.mu.weight, model.lin_last.sigma.weight, estimate=False))
+    approx_loss_diff = np.asarray(infl.i_up_loss(model.lin_last.mu.weight, model.lin_last.sigma.weight, estimate=True))
     to_look = int(1/6 * len(x-1))
     top_train = np.argsort(approx_loss_diff)[::-1][:to_look]
     return approx_loss_diff[top_train], top_train

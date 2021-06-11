@@ -301,9 +301,6 @@ def exact_difference(model, top_train, test_idx):
     return exact_loss_diff_med, exact_loss_diff_max
 
 
-
-
-
 def main():
     train, test, pearson, spearman = list(), list(), list(), list()
     for i in range(5):
