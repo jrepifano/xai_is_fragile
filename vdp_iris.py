@@ -46,14 +46,14 @@ class Model(torch.nn.Module):
     def __init__(self, n_feats, n_nodes, n_classes):
         super(Model, self).__init__()
         self.lin1 = vdp.Linear(n_feats, n_nodes, input_flag=True)
-        # self.lin2 = vdp.Linear(n_nodes, n_nodes)
+        # self.lin2 = torch.nn.Linear(n_nodes, n_nodes)
         self.lin_last = vdp.Linear(n_nodes, n_classes)
         self.softmax = vdp.Softmax()
-        self.relu = vdp.Tanh()
+        self.relu = vdp.SELU()
         self.scale = False
-        self.alpha = 0.1
-        self.beta = [1 for layer in self.children() if hasattr(layer, 'kl_term')]
-        self.tau = 0.01
+        self.alpha = 1
+        self.beta = 1
+        self.tau = 1
 
     def forward(self, x):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
@@ -61,8 +61,7 @@ class Model(torch.nn.Module):
             x = torch.tensor(x, requires_grad=True, device=device, dtype=torch.float32)
         mu, sigma = self.lin1(x)
         mu, sigma = self.relu(mu, sigma)
-        # mu, sigma = self.lin2(mu, sigma)
-        # mu, sigma = self.relu(mu, sigma)
+        # x = self.relu(self.lin2(x))
         mu, sigma = self.lin_last(mu, sigma)
         mu, sigma = self.softmax(mu, sigma)
         return mu, sigma
@@ -72,9 +71,8 @@ class Model(torch.nn.Module):
         if not torch.is_tensor(x):
             x = torch.tensor(x, requires_grad=True, device=device, dtype=torch.float32)
         mu, sigma = self.lin1(x)
-        # mu, sigma = self.relu(mu, sigma)
-        # mu, sigma = self.lin2(mu, sigma)
         mu, sigma = self.relu(mu, sigma)
+        # x = self.relu(self.lin2(x))
         return mu, sigma
 
     def fit(self, x, y, no_epochs=1000):
@@ -92,10 +90,10 @@ class Model(torch.nn.Module):
                 self.alpha, self.beta, self.tau = scale_hyperp(log_det, nll, kl)
                 self.scale = True
             loss = self.alpha * log_det + nll + self.tau * torch.stack([a * b for a, b in zip(self.beta, kl)]).sum()
-            # if epoch % 10000 == 0:
-            #     print('Epoch {}/{}, Loss: {:.2f}, Train Acc: {:.2f}'.format(epoch+1, no_epochs, loss.item(), self.score(x, y)))
             loss.backward()
             optimizer.step()
+            if scheduler.optimizer.param_groups[0]['lr'] == 1e-05:#1.0000000000000002e-07:
+                print('Early Stopping Triggered')
             scheduler.step(loss.item())
 
     def score(self, x, y):
@@ -134,7 +132,7 @@ class influence_wrapper:
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor([self.y_train[self.pointer]], device=self.device))#, self.model)
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor([self.y_train[self.pointer]], device=self.device))
         return loss
 
     def get_train_loss(self, mu, sigma):
@@ -146,7 +144,7 @@ class influence_wrapper:
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_train, device=self.device))#, self.model)
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_train, device=self.device))
         return loss
 
     def get_test_loss(self, mu, sigma):
@@ -158,7 +156,7 @@ class influence_wrapper:
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_test, device=self.device))#, self.model)
+        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_test, device=self.device))
         return loss
 
     def get_hessian(self, mu, sigma):
@@ -172,19 +170,19 @@ class influence_wrapper:
         H = H.view(square_size, square_size)
         return H
 
-    def LiSSA(self, v, mu, sigma):
+    def LiSSA(self, v, weights):
         count = 0
         cur_estimate = v
         damping = 0
         scale = 10
         num_samples = len(self.x_train)
-        ihvp = None
         prev_norm = 1
         diff = prev_norm
+        ihvp = None
         for i in range(len(self.x_train)):
             self.pointer = i
             while diff > 0.00001 and count < 10000:
-                hvp = torch.autograd.functional.hvp(self.get_train_loss, (mu, sigma), (cur_estimate, torch.zeros_like(cur_estimate)))[1][0]
+                hvp = torch.autograd.functional.hvp(self.get_train_loss, weights, cur_estimate)[1]
                 cur_estimate = [a + (1 - damping) * b - c / scale for (a, b, c) in zip(v, cur_estimate, hvp)]
                 cur_estimate = torch.squeeze(torch.stack(cur_estimate))  # .view(1, -1)
                 numpy_est = cur_estimate.detach().cpu().numpy()
@@ -201,20 +199,37 @@ class influence_wrapper:
         ihvp = torch.squeeze(torch.stack(ihvp))
         return ihvp.detach()
 
-    def i_up_loss(self, mu, sigma, estimate=False):
+    def i_up_params(self, mu, sigma, idx, estimate=False):
+        i_up_params = list()
+        if estimate:
+            for i in idx:
+                self.pointer = i
+                grad = torch.autograd.grad(self.get_loss(mu, sigma), mu)[0]
+                i_up_params.append(self.LiSSA(torch.autograd.functional.hvp(self.get_train_loss, (mu, sigma), grad)[1], mu).detach().cpu().numpy())
+        else:
+            H = self.get_hessian(self.model.lin_last.weight)
+            H_inv = torch.inverse(H)
+            for i in idx:
+                self.pointer = i
+                grad = torch.autograd.grad(self.get_loss(mu, sigma), mu)[0]
+                orig_shape = grad.shape
+                i_up_params.append((H_inv @ grad.float().view(-1, 1)).view(orig_shape).detach().cpu().numpy())
+        return i_up_params
+
+    def i_up_loss(self, mu, sigma, idx, estimate=False):
         i_up_loss = list()
         test_grad = torch.autograd.grad(self.get_test_loss(mu, sigma), mu)[0]
         if estimate:
-            ihvp = self.LiSSA(test_grad, mu, sigma)
-            for i in range(len(self.x_train)):
+            for i in idx:
                 self.pointer = i
                 train_grad = torch.autograd.grad(self.get_loss(mu, sigma), mu)[0]
-                i_up_loss.append((-ihvp.view(1, -1) @ train_grad.view(-1, 1)).item())
+                i_up_loss.append((test_grad.view(1, -1) @ self.LiSSA(torch.autograd.functional.hvp(self.get_train_loss,
+                                                                                       (mu, sigma), (train_grad))[1], mu).view(-1, 1)).detach().cpu().numpy()[0][0])
         else:
             H = self.get_hessian(mu, sigma)
-            # H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
+            H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
             H_inv = torch.inverse(H)
-            for i in range(len(self.x_train)):
+            for i in idx:
                 self.pointer = i
                 train_grad = torch.autograd.grad(self.get_loss(mu, sigma), mu)[0]
                 i_up_loss.append((test_grad.view(1, -1) @ (H_inv @ train_grad.float().view(-1, 1))).item())
@@ -252,7 +267,7 @@ def find_max_loss():
     return max_loss, train_acc, test_acc
 
 
-def train_model(max_loss=83):
+def find_top_train(max_loss=83):
     x, y = load_iris(return_X_y=True)
     train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
     test_index = np.asarray([max_loss])
@@ -264,9 +279,11 @@ def train_model(max_loss=83):
     model.fit(x_train, y_train, 60000)
     train_acc = model.score(x_train, y_train)
     train_loss = model.get_indiv_loss(x_train, y_train)
+    to_look = int(1/6 * len(x-1))
+    top_train = np.argsort(train_loss)[::-1][:to_look]
     top_eig = get_hessian_info(model, x_train, y_train)
-    torch.save(model.state_dict(), 'loo_params.pt')
-    return model, top_eig, train_acc
+    torch.save(model.state_dict(), 'loo_params_1l.pt')
+    return top_train, model, top_eig, train_acc
 
 
 def exact_difference(model, top_train, max_loss):
@@ -291,7 +308,7 @@ def exact_difference(model, top_train, max_loss):
         x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
         x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
         # model = Model(x.shape[1], 5, 3).to('cuda:0')
-        model.load_state_dict(torch.load('loo_params.pt'))
+        model.load_state_dict(torch.load('loo_params_1l.pt'))
         model.fit(x_train, y_train, 7500)
         # exact_parameter_diff.append(model.lin_last.weight.detach().cpu().numpy() - true_parameters)
         exact_loss_diff.append(model.get_indiv_loss(x_test, y_test) - true_loss)
@@ -299,8 +316,8 @@ def exact_difference(model, top_train, max_loss):
     return exact_loss_diff#, exact_parameter_diff
 
 
-def approx_difference(model, max_loss):
-    model.load_state_dict(torch.load('loo_params.pt'))
+def approx_difference(model, top_train, max_loss):
+    model.load_state_dict(torch.load('loo_params_1l.pt'))
     x, y = load_iris(return_X_y=True)
     train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
     test_index = np.asarray([max_loss])
@@ -311,46 +328,45 @@ def approx_difference(model, max_loss):
     infl = influence_wrapper(model, x_train, y_train, x_test, y_test)
     # approx_parameter_diff = -1 / len(x_train) * np.asarray(infl.i_up_params(model.lin_last.weight, top_train, estimate=True))
     # approx_parameter_diff = [np.linalg.norm(diff, ord=2) for diff in approx_parameter_diff]
-    approx_loss_diff = np.asarray(infl.i_up_loss(model.lin_last.mu.weight, model.lin_last.sigma.weight, estimate=True))
-    to_look = int(1/6 * len(x-1))
-    top_train = np.argsort(approx_loss_diff)[::-1][:to_look]
-    return approx_loss_diff[top_train], top_train
+    approx_loss_diff = np.asarray(infl.i_up_loss(model.lin_last.mu.weight, model.lin_last.sigma.weight, top_train, estimate=False))
+    return approx_loss_diff#, approx_parameter_diff
 
 
 def main(n_iters):
     train, eig, pearson, spearman = list(), list(), list(), list()
     i = 0
     while i < n_iters:
-        start_time = time.time()
-        # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
-        max_loss = 83
-        # print('Done max loss')
-        model, top_eig, train_acc = train_model(max_loss)
-        print(train_acc)
-        print('Done top train')
-        approx_loss_diff, top_train = approx_difference(model, max_loss)
-        print('Done approx diff')
-        exact_loss_diff = exact_difference(model, top_train, max_loss)
-        print('Done Exact Diff')
+        try:
+            start_time = time.time()
+            # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
+            max_loss = 83
+            # print('Done max loss')
+            top_train, model, top_eig, train_acc = find_top_train(max_loss)
+            print(train_acc)
+            print('Done top train')
+            exact_loss_diff = exact_difference(model, top_train, max_loss)
+            print('Done Exact Diff')
+            approx_loss_diff = approx_difference(model, top_train, max_loss)
+            p = pearsonr(exact_loss_diff, approx_loss_diff)
+            s = spearmanr(exact_loss_diff, approx_loss_diff)
+        except Exception as e:
+            print(e)
+            continue
         train.append(train_acc)
         eig.append(top_eig)
         pearson.append(pearsonr(exact_loss_diff, approx_loss_diff))
         spearman.append(spearmanr(exact_loss_diff, approx_loss_diff))
-        print(pearsonr(exact_loss_diff, approx_loss_diff))
-        print(spearmanr(exact_loss_diff, approx_loss_diff))
         print('Done {}/{} in {:.2f} minutes'.format(i+1, n_iters, (time.time()-start_time)/60))
+        if i % 5 == 0:
+            np.save('figure1/vdp_1l_train.npy', train, allow_pickle=True)
+            np.save('figure1/vdp_1l_eig.npy', eig, allow_pickle=True)
+            np.save('figure1/vdp_1l_pearson.npy', pearson, allow_pickle=True)
+            np.save('figure1/vdp_1l_spearman.npy', spearman, allow_pickle=True)
         i += 1
-    #     if i % 10 == 0:
-    #         np.save('figure1/vdp_1l_train.npy', train, allow_pickle=True)
-    #         np.save('figure1/vdp_1l_eig.npy', eig, allow_pickle=True)
-    #         np.save('figure1/vdp_1l_pearson.npy', pearson, allow_pickle=True)
-    #         np.save('figure1/vdp_1l_spearman.npy', spearman, allow_pickle=True)
-    # np.save('figure1/vdp_1l_train.npy', train, allow_pickle=True)
-    # np.save('figure1/vdp_1l_eig.npy', eig, allow_pickle=True)
-    # np.save('figure1/vdp_1l_pearson.npy', pearson, allow_pickle=True)
-    # np.save('figure1/vdp_1l_spearman.npy', spearman, allow_pickle=True)
-
-    pass
+    np.save('figure1/vdp_1l_train.npy', train, allow_pickle=True)
+    np.save('figure1/vdp_1l_eig.npy', eig, allow_pickle=True)
+    np.save('figure1/vdp_1l_pearson.npy', pearson, allow_pickle=True)
+    np.save('figure1/vdp_1l_spearman.npy', spearman, allow_pickle=True)
 
 
 if __name__ == '__main__':

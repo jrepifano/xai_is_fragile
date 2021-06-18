@@ -53,7 +53,7 @@ class Model(torch.nn.Module):
         self.lin6 = vdp.Linear(n_nodes, n_nodes)
         self.lin_last = vdp.Linear(n_nodes, n_classes)
         self.softmax = vdp.Softmax()
-        self.relu = vdp.Tanh()
+        self.relu = vdp.SELU()
         self.scale = False
         self.alpha = 1
         self.beta = 1

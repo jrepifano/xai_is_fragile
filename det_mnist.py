@@ -10,7 +10,7 @@ from scipy.stats import pearsonr, spearmanr
 
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 class data_loader(Dataset):
@@ -75,7 +75,7 @@ class Model(torch.nn.Module):
         dataloader = DataLoader(data_loader(x, y), 10000, shuffle=True, num_workers=2, pin_memory=True)
         criterion = torch.nn.CrossEntropyLoss()
         optimizer = torch.optim.AdamW(self.parameters(), lr=1e-2, weight_decay=0.001)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, verbose=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=500, verbose=True)
         for epoch in range(no_epochs):
             for idx, (x, y) in enumerate(dataloader):
                 if x.device.type != device or y.device.type != device:
@@ -87,10 +87,10 @@ class Model(torch.nn.Module):
                 optimizer.step()
             scheduler.step(loss.item())
             if scheduler.optimizer.param_groups[0]['lr'] == 1.0000000000000004e-08:
-                print('Early Stopping Triggered')
+                # print('Early Stopping Triggered')
                 break
-            if epoch % 10 == 0:
-                print('Epoch {}/{}, Loss: {:.2f}, Train Acc: {:.2f}'.format(epoch+1, no_epochs, loss.item(), self.score(x, y)))
+            # if epoch % 10 == 0:
+            #     print('Epoch {}/{}, Loss: {:.2f}, Train Acc: {:.2f}'.format(epoch+1, no_epochs, loss.item(), self.score(x, y)))
 
 
     def score(self, x, y):
@@ -127,21 +127,21 @@ class influence_wrapper:
     def get_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
         logits = self.model.bottleneck(self.x_train[self.pointer].unsqueeze(0))
-        logits = logits @ weights.T
+        logits = logits @ weights.T + self.model.lin_last.bias
         loss = criterion(logits, torch.tensor([self.y_train[self.pointer]], device=self.device))
         return loss
 
     def get_train_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
         logits = self.model.bottleneck(self.x_train)
-        logits = logits @ weights.T
+        logits = logits @ weights.T + self.model.lin_last.bias
         loss = criterion(logits, torch.tensor(self.y_train, device=self.device))
         return loss
 
     def get_test_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
         logits = self.model.bottleneck(self.x_test)
-        logits = logits @ weights.T
+        logits = logits @ weights.T + self.model.lin_last.bias
         loss = criterion(logits, torch.tensor(self.y_test, device=self.device))
         return loss
 
@@ -163,27 +163,27 @@ class influence_wrapper:
         scale = 10
         num_samples = len(self.x_train)
         ihvp = None
-        # for i in range(len(self.x_train)):
-        #     self.pointer = i
-        prev_norm = 1
-        diff = prev_norm
-        while diff > 0.00001 and count < 10000:
-            hvp = torch.autograd.functional.hvp(self.get_train_loss, weights, cur_estimate)[1]
-            cur_estimate = [a + (1 - damping) * b - c / scale for (a, b, c) in zip(v, cur_estimate, hvp)]
-            cur_estimate = torch.squeeze(torch.stack(cur_estimate))  # .view(1, -1)
-            numpy_est = cur_estimate.detach().cpu().numpy()
-            numpy_est = numpy_est.reshape(1, -1)
-            count += 1
-            diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
-            prev_norm = np.linalg.norm(np.concatenate(numpy_est))
-        if ihvp is None:
-            ihvp = [b/scale for b in cur_estimate]
-        else:
-            ihvp = [a + b/scale for (a, b) in zip(ihvp, cur_estimate)]
-        ihvp = torch.squeeze(torch.stack(ihvp))
-        ihvp = [a / num_samples for a in ihvp]
-        ihvp = torch.squeeze(torch.stack(ihvp))
-        return ihvp.detach()
+        for i in range(len(self.x_train)):
+            self.pointer = i
+            prev_norm = 1
+            diff = prev_norm
+            while diff > 0.00001 and count < 10000:
+                hvp = torch.autograd.functional.hvp(self.get_loss, weights, cur_estimate)[1]
+                cur_estimate = [a + (1 - damping) * b - c / scale for (a, b, c) in zip(v, cur_estimate, hvp)]
+                cur_estimate = torch.squeeze(torch.stack(cur_estimate))  # .view(1, -1)
+                numpy_est = cur_estimate.detach().cpu().numpy()
+                numpy_est = numpy_est.reshape(1, -1)
+                count += 1
+                diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
+                prev_norm = np.linalg.norm(np.concatenate(numpy_est))
+            if ihvp is None:
+                ihvp = [b/scale for b in cur_estimate]
+            else:
+                ihvp = [a + b/scale for (a, b) in zip(ihvp, cur_estimate)]
+            ihvp = torch.squeeze(torch.stack(ihvp))
+            ihvp = [a / num_samples for a in ihvp]
+            ihvp = torch.squeeze(torch.stack(ihvp))
+            return ihvp.detach()
 
     def i_up_loss(self, weights, estimate=False):
         i_up_loss = list()
@@ -221,7 +221,7 @@ def train_model():
     x_train, y_train = mnist_train.data.view(60000, 1, 28, 28)/255.0, mnist_train.targets
     x_test, y_test = mnist_test.data.view(10000, 1, 28, 28)/255.0, mnist_test.targets
     model = Model().to('cuda:0')
-    model.fit(x_train, y_train, 500)
+    model.fit(x_train, y_train, 5000)
     train_acc = model.score(x_train, y_train)
     test_loss = model.get_indiv_loss(x_test, y_test)
     test_acc = model.score(x_test, y_test)
@@ -230,43 +230,35 @@ def train_model():
     train_loss = model.get_indiv_loss(x_train, y_train)
     to_look = 40
     top_train = np.argsort(train_loss)[::-1][:to_look]
-    torch.save(model.state_dict(), 'det_small_cnn.pt')
+    torch.save(model.state_dict(), 'lenet.pt')
     return model, (med_loss, max_loss), top_train, (train_acc, test_acc)
 
 
 def approx_difference(model, test_idx, top_train):
     med_loss = test_idx[0]
     max_loss = test_idx[1]
-    model.load_state_dict(torch.load('det_small_cnn.pt'))
-    mnist_train = MNIST('/data/', train=True, download=False)
-    mnist_test = MNIST('/data/', train=False, download=False)
-    x_train, y_train = mnist_train.data.view(60000, 1, 28, 28)/255.0, mnist_train.targets
-    x_test, y_test = mnist_test.data.view(10000, 1, 28, 28)/255.0, mnist_test.targets
-
-    test_index = np.asarray([med_loss])
-    x_test, y_test = x_test[test_index], y_test[test_index]
-    infl = influence_wrapper(model, x_train, y_train, x_test, y_test)
-    approx_loss_diff_med = np.asarray(infl.i_up_loss(model.lin_last.weight, estimate=False))
     to_look = 40
-    top_train_med = np.argsort(approx_loss_diff_med)[::-1][:to_look]
-
+    model.load_state_dict(torch.load('lenet.pt'))
     mnist_train = MNIST('/data/', train=True, download=False)
     mnist_test = MNIST('/data/', train=False, download=False)
     x_train, y_train = mnist_train.data.view(60000, 1, 28, 28)/255.0, mnist_train.targets
     x_test, y_test = mnist_test.data.view(10000, 1, 28, 28)/255.0, mnist_test.targets
-    test_index = np.asarray([max_loss])
-    x_test, y_test = x_test[test_index], y_test[test_index]
-    infl = influence_wrapper(model, x_train, y_train, x_test, y_test)
+    x_test, y_test = mnist_test.data.view(10000, 1, 28, 28) / 255.0, mnist_test.targets
+    test_index_max = np.asarray([max_loss])
+    test_index_med = np.asarray([med_loss])
+    x_test_max, y_test_max = x_test[test_index_max], y_test[test_index_max]
+    x_test_med, y_test_med = x_test[test_index_med], y_test[test_index_med]
+
+    # infl = influence_wrapper(model, x_train, y_train, x_test_med, y_test_med)
+    # approx_loss_diff_med = np.asarray(infl.i_up_loss(model.lin_last.weight, estimate=False))
+
+    infl = influence_wrapper(model, x_train, y_train, x_test_max, y_test_max)
     approx_loss_diff_max = np.asarray(infl.i_up_loss(model.lin_last.weight, estimate=False))
-    to_look = 40
-    top_train_max = np.argsort(approx_loss_diff_max)[::-1][:to_look]
-    # return approx_loss_diff_med[top_train_med], approx_loss_diff_max[top_train_max], top_train_med, top_train_max
-    return approx_loss_diff_med[top_train], approx_loss_diff_max[top_train]
+    top_train_max = np.argsort(np.abs(approx_loss_diff_max))[::-1][:to_look]
+    return approx_loss_diff_max[top_train_max], top_train_max#approx_loss_diff_max[top_train]
 
 
-def exact_difference(model, top_train, test_idx):
-    top_train_med = top_train[0]
-    top_train_max = top_train[1]
+def exact_difference(model, top_train_max, test_idx):
     med_loss = test_idx[0]
     max_loss = test_idx[1]
     exact_loss_diff_med, exact_loss_diff_max = list(), list()
@@ -276,29 +268,21 @@ def exact_difference(model, top_train, test_idx):
     true_loss_med = model.get_indiv_loss(x_test[test_index], y_test[test_index])
     test_index = np.asarray([max_loss])
     true_loss_max = model.get_indiv_loss(x_test[test_index], y_test[test_index])
-    for i in top_train_med:
-        mnist_train = MNIST('/data/', train=True, download=False)
-        mnist_test = MNIST('/data/', train=False, download=False)
-        x_train, y_train = mnist_train.data.view(60000, 1, 28, 28) / 255.0, mnist_train.targets
-        x_test, y_test = mnist_test.data.view(10000, 1, 28, 28) / 255.0, mnist_test.targets
-        test_index = np.asarray([max_loss])
-        x_test, y_test = x_test[test_index], y_test[test_index]
-        x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
-        model.load_state_dict(torch.load('det_small_cnn.pt'))
-        model.fit(x_train, y_train, 30)
-        exact_loss_diff_med.append(model.get_indiv_loss(x_test, y_test) - true_loss_med)
     for i in top_train_max:
         mnist_train = MNIST('/data/', train=True, download=False)
         mnist_test = MNIST('/data/', train=False, download=False)
         x_train, y_train = mnist_train.data.view(60000, 1, 28, 28) / 255.0, mnist_train.targets
         x_test, y_test = mnist_test.data.view(10000, 1, 28, 28) / 255.0, mnist_test.targets
-        test_index = np.asarray([max_loss])
-        x_test, y_test = x_test[test_index], y_test[test_index]
+        test_index_max = np.asarray([max_loss])
+        # test_index_med = np.asarray([med_loss])
+        x_test_max, y_test_max = x_test[test_index_max], y_test[test_index_max]
+        # x_test_med, y_test_med = x_test[test_index_med], y_test[test_index_med]
         x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
-        model.load_state_dict(torch.load('det_small_cnn.pt'))
-        model.fit(x_train, y_train, 30)
-        exact_loss_diff_max.append(model.get_indiv_loss(x_test, y_test) - true_loss_max)
-    return exact_loss_diff_med, exact_loss_diff_max
+        model.load_state_dict(torch.load('lenet.pt'))
+        model.fit(x_train, y_train, 3000)
+        # exact_loss_diff_med.append(model.get_indiv_loss(x_test_med, y_test_med) - true_loss_med)
+        exact_loss_diff_max.append(model.get_indiv_loss(x_test_max, y_test_max) - true_loss_max)
+    return exact_loss_diff_max
 
 
 def main():
@@ -307,9 +291,9 @@ def main():
         start_time = time.time()
         model, (med_loss, max_loss), top_train, (train_acc, test_acc) = train_model()
         print('Done training')
-        approx_loss_diff_med, approx_loss_diff_max = approx_difference(model, (med_loss, max_loss), top_train)
+        approx_loss_diff_max, top_train_max = approx_difference(model, (med_loss, max_loss), top_train)
         print('Done approx')
-        exact_loss_diff_med, exact_loss_diff_max = exact_difference(model, (top_train, top_train), (med_loss, max_loss))
+        exact_loss_diff_max = exact_difference(model, top_train_max, (med_loss, max_loss))
         print('Done Exact Diff')
 
         train.append(train_acc)
@@ -317,15 +301,15 @@ def main():
 
         max_pearson = pearsonr(exact_loss_diff_max, approx_loss_diff_max)
         max_spearman = spearmanr(exact_loss_diff_max, approx_loss_diff_max)
-        med_pearson = pearsonr(exact_loss_diff_med, approx_loss_diff_med)
-        med_spearman = spearmanr(exact_loss_diff_med, approx_loss_diff_med)
+        # med_pearson = pearsonr(exact_loss_diff_med, approx_loss_diff_med)
+        # med_spearman = spearmanr(exact_loss_diff_med, approx_loss_diff_med)
         print('Done {}/{} in {:.2f} minutes'.format(i+1, 10, (time.time()-start_time)/60))
         print(train_acc)
         print(test_acc)
         print(max_pearson)
         print(max_spearman)
-        print(med_pearson)
-        print(med_spearman)
+        # print(med_pearson)
+        # print(med_spearman)
         pass
 
 
