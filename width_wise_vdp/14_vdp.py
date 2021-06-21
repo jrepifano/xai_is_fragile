@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 def orderOfMagnitude(number):
@@ -37,7 +37,7 @@ def scale_hyperp(log_det, nll, kl):
         beta.append(10.0**power)
 
     # Find the tau scaling factor
-    tau = 10**(smallest_power - lli_power)
+    tau = 10**(smallest_power - lli_power - 1)
 
     return alpha, beta, tau
 
@@ -92,8 +92,8 @@ class Model(torch.nn.Module):
             loss = self.alpha * log_det + nll + self.tau * torch.stack([a * b for a, b in zip(self.beta, kl)]).sum()
             loss.backward()
             optimizer.step()
-            # if epoch % 10000 == 0:
-            #     print('Epoch {}/{}, Loss: {:.3f}, Train Acc: {:.3f}'.format(epoch+1, no_epochs, loss.item(), self.score(x, y)))
+            if epoch % 10000 == 0:
+                print('Epoch {}/{}, Loss: {:.3f}, Train Acc: {:.3f}'.format(epoch+1, no_epochs, loss.item(), self.score(x, y)))
             if scheduler.optimizer.param_groups[0]['lr'] == 1.0000000000000002e-07:
                 # print('Early Stopping Triggered')
                 break
