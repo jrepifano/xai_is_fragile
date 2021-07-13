@@ -8,7 +8,7 @@ def main():
     est_loss_diffs = list()
     true_loss_diffs = list()
     for i in range(50):
-        train()
+        # train()
         model = lenet(batch_size=1024)
         model.load_state_dict(torch.load('lenet_cifar.pt'))
         model.eval()

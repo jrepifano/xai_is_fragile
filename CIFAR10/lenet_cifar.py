@@ -48,7 +48,7 @@ class lenet(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         logits = self(x)
-        loss = self.criterion(logits, y)
+        loss = self.criterion(logits, y.long())
         acc = self.train_acc(logits.softmax(dim=-1), y)
         self.log('loss', loss)
         self.count += len(y)
@@ -89,8 +89,8 @@ class lenet(pl.LightningModule):
                                         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
         mnist_test = CIFAR10(os.getcwd(), train=False, download=True, transform=transform)
         if self.test_idx != None:
-            mnist_test.data = mnist_test.data[self.test_idx].unsqueeze(0)
-            mnist_test.targets = mnist_test.targets[self.test_idx].unsqueeze(0)
+            mnist_test.data = np.expand_dims(mnist_test.data[self.test_idx], axis=0)
+            mnist_test.targets = [mnist_test.targets[self.test_idx]]
         return DataLoader(mnist_test, batch_size=self.batch_size, num_workers=4, shuffle=False, pin_memory=True)
 
     def configure_optimizers(self):
@@ -144,7 +144,7 @@ def train():
         mode='min',
         check_on_train_epoch_end=True
     )
-    trainer = pl.Trainer(gpus='5', max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=1, callbacks=[early_stop_callback])
+    trainer = pl.Trainer(gpus='0', max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=1, callbacks=[early_stop_callback])
     # trainer.tune(model)
     trainer.fit(model)
     torch.save(model.state_dict(), 'lenet_cifar.pt')
@@ -185,7 +185,7 @@ def finetune(top_40, test_idx, true_loss):
             mode='min',
             check_on_train_epoch_end=True
         )
-        trainer = pl.Trainer(gpus='5', max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=100,
+        trainer = pl.Trainer(gpus='0', max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=100,
                              callbacks=[early_stop_callback])
         trainer.fit(model)
         loss_diffs.append(model.get_indiv_loss(model.test_dataloader()) - true_loss)
