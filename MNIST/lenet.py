@@ -133,40 +133,14 @@ class lenet(pl.LightningModule):
             return loss.item()
 
 
-def train():
-    model = lenet(batch_size=1024)
-    no_epochs = 1000
-    early_stop_callback = pl.callbacks.early_stopping.EarlyStopping(
-        monitor='loss',
-        min_delta=0.00,
-        patience=10,
-        verbose=True,
-        mode='min',
-        check_on_train_epoch_end=True
-    )
-    trainer = pl.Trainer(gpus=1, max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=1, callbacks=[early_stop_callback])
-    # trainer.tune(model)
-    trainer.fit(model)
-    torch.save(model.state_dict(), 'lenet.pt')
-    model.eval()
-    train_losses = model.get_losses(set='train')
-    test_losses = model.get_losses(set='test')
-    return train_losses, test_losses
-
-
-def get_influence(test_idx, batch=True):
-    model = lenet(batch_size=1024, train_idx_to_remove=None, test_idx=test_idx)
+def get_influence(test_idx):
+    model = lenet(batch_size=8192, train_idx_to_remove=None, test_idx=test_idx)
     model.load_state_dict(torch.load('lenet.pt'))
     i_up_loss = list()
     for itr, (x_test, y_test) in enumerate(model.test_dataloader()):
         pass
-    if batch:
-        for itr, (x_train, y_train) in enumerate(model.train_dataloader()):
-            infl = influence_wrapper(model, x_train, y_train, x_test, y_test)
-            i_up_loss.append(infl.i_up_loss(model.lin_last.weight, estimate=True))
-    else:
-        infl = influence_wrapper(model, None, None, x_test, y_test, model.train_dataloader())
-        i_up_loss.append(infl.i_up_loss(model.lin_last.weight, estimate=True))
+    infl = influence_wrapper(model, None, None, x_test, y_test, model.train_dataloader())
+    i_up_loss.append(infl.i_up_loss(model.lin_last.weight, estimate=True))
     i_up_loss = np.hstack(i_up_loss)
     return i_up_loss
 
@@ -174,7 +148,7 @@ def get_influence(test_idx, batch=True):
 def finetune(top_40, test_idx, true_loss):
     loss_diffs = list()
     for counter, idx in enumerate(top_40):
-        model = lenet(batch_size=1024, train_idx_to_remove=idx, test_idx=test_idx)
+        model = lenet(batch_size=8192, train_idx_to_remove=idx, test_idx=test_idx)
         model.load_state_dict(torch.load('lenet.pt'))
         no_epochs = 100
         early_stop_callback = pl.callbacks.early_stopping.EarlyStopping(
@@ -192,3 +166,23 @@ def finetune(top_40, test_idx, true_loss):
         print('Done {}/{}'.format(counter + 1, len(top_40)))
     return loss_diffs
 
+
+def train():
+    model = lenet(batch_size=8192)
+    no_epochs = 1000
+    early_stop_callback = pl.callbacks.early_stopping.EarlyStopping(
+        monitor='loss',
+        min_delta=0.00,
+        patience=10,
+        verbose=True,
+        mode='min',
+        check_on_train_epoch_end=True
+    )
+    trainer = pl.Trainer(gpus=1, max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=1, callbacks=[early_stop_callback])
+    # trainer.tune(model)
+    trainer.fit(model)
+    torch.save(model.state_dict(), 'lenet.pt')
+    model.eval()
+    train_losses = model.get_losses(set='train')
+    test_losses = model.get_losses(set='test')
+    return train_losses, test_losses
