@@ -48,28 +48,32 @@ class influence_wrapper:
         damping = 0.01
         scale = 10
         ihvp = None
-        num_samples = len(self.x_train)
-        for i in range(len(self.x_train)):
-            self.pointer = i
-            prev_norm = 1
-            count = 0
-            cur_estimate = v.clone()
-            diff = prev_norm
-            while diff > 0.00001 and count < 10000:
-                hvp = torch.autograd.functional.hvp(self.get_loss, weights, cur_estimate)[1]
-                cur_estimate = [a + (1 - damping) * b - c / scale for (a, b, c) in zip(v, cur_estimate, hvp)]
-                cur_estimate = torch.squeeze(torch.stack(cur_estimate))
-                numpy_est = cur_estimate.detach().cpu().numpy()
-                numpy_est = numpy_est.reshape(1, -1)
-                count += 1
-                diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
-                prev_norm = np.linalg.norm(np.concatenate(numpy_est))
-                if count % 500 == 0:
-                    print('Samples {}/{}; Recursion Depth {}; Norm: {:.2f}'.format(i+1, len(self.x_train), count, prev_norm))
-            if ihvp is None:
-                ihvp = [b/scale for b in cur_estimate]
-            else:
-                ihvp = [a + b/scale for (a, b) in zip(ihvp, cur_estimate)]
+        prev_norm = 1
+        count = 0
+        cur_estimate = v.clone()
+        diff = prev_norm
+        trainloader = iter(self.model.train_dataloader())
+        num_samples = 60000
+        while diff > 0.001 and count < 10000:
+            try:
+                self.x_train, self.y_train = next(trainloader)
+            except StopIteration:
+                trainloader = iter(self.model.train_dataloader())
+            hvp = torch.autograd.functional.hvp(self.get_train_loss, weights, cur_estimate)[1]
+            cur_estimate = [a + (1 - damping) * b - c / scale for (a, b, c) in zip(v, cur_estimate, hvp)]
+            cur_estimate = torch.squeeze(torch.stack(cur_estimate))
+            numpy_est = cur_estimate.detach().cpu().numpy()
+            numpy_est = numpy_est.reshape(1, -1)
+            count += 1
+            diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
+            prev_norm = np.linalg.norm(np.concatenate(numpy_est))
+            # if count % 500 == 0:
+            print('Recursion Depth {}; Norm: {:.2f}'.format(count, prev_norm))
+        if ihvp is None:
+            ihvp = [b/scale for b in cur_estimate]
+        else:
+            ihvp = [a + b/scale for (a, b) in zip(ihvp, cur_estimate)]
+            print(np.linalg.norm(np.concatenate(ihvp)))
         ihvp = torch.squeeze(torch.stack(ihvp))
         ihvp = [a / num_samples for a in ihvp]
         ihvp = torch.squeeze(torch.stack(ihvp))
@@ -79,15 +83,14 @@ class influence_wrapper:
         i_up_loss = list()
         test_grad = torch.autograd.grad(self.get_test_loss(weights), weights)[0]
         if estimate:
-            ihvp = None
+            ihvp = self.LiSSA(test_grad, weights)
             for itr, (x_train, y_train) in enumerate(self.trainloader):
-                self.x_train, self.y_train = x_train, y_train
-                if ihvp is None:
-                    ihvp = self.LiSSA(test_grad, weights)
+                self.x_train = x_train
+                self.y_train = y_train
                 for i in range(len(self.x_train)):
                     self.pointer = i
                     train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
-                    i_up_loss.append((-ihvp.view(1, -1) @ train_grad.view(-1, 1)).item())
+                    i_up_loss.append((ihvp.view(1, -1) @ train_grad.view(-1, 1)).item())
         else:
             H = self.get_hessian(weights)
             H = H + (0.001 * torch.eye(H.shape[0], device=self.device))

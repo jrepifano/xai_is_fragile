@@ -65,6 +65,8 @@ class lenet(pl.LightningModule):
         print('Train Acc {:.2f}, Test Acc: {:.2f}'.format(self.train_acc.compute(), self.test_acc.compute()))
         self.train_acc.reset()
         self.test_acc.reset()
+
+    def on_train_epoch_end(self):
         print(self.count)
         self.count = 0
 
@@ -95,7 +97,7 @@ class lenet(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=0.001)
-        scheduler = {'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, verbose=True), 'monitor': 'loss', 'interval': 'epoch', 'frequency': 1}
+        scheduler = {'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, verbose=False), 'monitor': 'loss', 'interval': 'epoch', 'frequency': 1}
         return [optimizer], [scheduler]
 
     def get_progress_bar_dict(self):
@@ -133,8 +135,8 @@ class lenet(pl.LightningModule):
             return loss.item()
 
 
-def get_influence(test_idx):
-    model = lenet(batch_size=8192, train_idx_to_remove=None, test_idx=test_idx)
+def get_influence(test_idx, batch_size):
+    model = lenet(batch_size=batch_size, train_idx_to_remove=None, test_idx=test_idx)
     model.load_state_dict(torch.load('lenet.pt'))
     i_up_loss = list()
     for itr, (x_test, y_test) in enumerate(model.test_dataloader()):
@@ -145,21 +147,21 @@ def get_influence(test_idx):
     return i_up_loss
 
 
-def finetune(top_40, test_idx, true_loss):
+def finetune(gpu, top_40, test_idx, true_loss, batch_size):
     loss_diffs = list()
     for counter, idx in enumerate(top_40):
-        model = lenet(batch_size=8192, train_idx_to_remove=idx, test_idx=test_idx)
+        model = lenet(batch_size=batch_size, train_idx_to_remove=idx, test_idx=test_idx)
         model.load_state_dict(torch.load('lenet.pt'))
         no_epochs = 100
         early_stop_callback = pl.callbacks.early_stopping.EarlyStopping(
             monitor='loss',
             min_delta=0.00,
             patience=5,
-            verbose=True,
+            verbose=False,
             mode='min',
             check_on_train_epoch_end=True
         )
-        trainer = pl.Trainer(gpus='0', max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=100,
+        trainer = pl.Trainer(gpus=gpu, max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=100,
                              callbacks=[early_stop_callback])
         trainer.fit(model)
         loss_diffs.append(model.get_indiv_loss(model.test_dataloader()) - true_loss)
@@ -167,18 +169,18 @@ def finetune(top_40, test_idx, true_loss):
     return loss_diffs
 
 
-def train():
-    model = lenet(batch_size=8192)
+def train(gpu, batch_size):
+    model = lenet(batch_size=batch_size)
     no_epochs = 1000
     early_stop_callback = pl.callbacks.early_stopping.EarlyStopping(
         monitor='loss',
         min_delta=0.00,
         patience=10,
-        verbose=True,
+        verbose=False,
         mode='min',
         check_on_train_epoch_end=True
     )
-    trainer = pl.Trainer(gpus=1, max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=1, callbacks=[early_stop_callback])
+    trainer = pl.Trainer(gpus=gpu, max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=1, callbacks=[early_stop_callback])
     # trainer.tune(model)
     trainer.fit(model)
     torch.save(model.state_dict(), 'lenet.pt')
