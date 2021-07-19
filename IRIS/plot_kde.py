@@ -17,10 +17,10 @@ def mean_confidence_interval(data, confidence=0.95):
 def main():
     layers = [1, 2, 3, 4, 5, 6, 7, 8]
     activation = 'selu'
-    train = np.vstack([np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_train.npy') for i in layers])
-    pearson = np.abs(np.vstack([np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_pearson.npy') for i in layers]))
-    spearman = np.abs(np.vstack([np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_spearman.npy') for i in layers]))
-    eig = np.vstack([np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_eig.npy') for i in layers])
+    train = [np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_train.npy') for i in layers]
+    pearson = np.abs([np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_pearson.npy') for i in layers])
+    spearman = np.abs([np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_spearman.npy') for i in layers])
+    eig = [np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_eig.npy') for i in layers]
 
     activation = 'tanh'
     train_vdp = [np.load('figure1_vdp_'+activation+'/vdp_' + str(i) + 'l_train.npy') for i in layers]
@@ -28,7 +28,9 @@ def main():
     spearman_vdp = np.abs([np.load('figure1_vdp_'+activation+'/vdp_' + str(i) + 'l_spearman.npy') for i in layers])
     eig_vdp = [np.load('figure1_vdp_'+activation+'/vdp_' + str(i) + 'l_eig.npy') for i in layers]
 
-    plt.bar(np.arange(8)+1 - 0.2, np.mean(spearman, axis=1), 0.4, yerr=np.std(spearman, axis=1), label='Deterministic - SELU')
+    mean = [np.mean(a) for a in spearman]
+    std = [np.std(a) for a in spearman]
+    plt.bar(np.arange(8)+1 - 0.2, mean, 0.4, yerr=std, label='Deterministic - SELU')
     mean = [np.mean(a[:, 0]) for a in spearman_vdp]
     std = [np.std(a[:, 0]) for a in spearman_vdp]
     plt.bar(np.arange(8)+1 + 0.2, mean, 0.4, yerr=std, label='Stochastic - Tanh')
@@ -38,9 +40,11 @@ def main():
     plt.title('Iris')
     plt.legend()
     plt.show()
+    mean = [np.nanmean(a) for a in eig]
+    std = [np.nanstd(a) for a in eig]
+    plt.bar(np.arange(8)+1 - 0.2, mean, 0.4, yerr=std, label='Deterministic - SELU')
     mean = [np.nanmean(a) for a in eig_vdp]
     std = [np.nanstd(a) for a in eig_vdp]
-    plt.bar(np.arange(8)+1 - 0.2, np.nanmean(eig, axis=1), 0.4, yerr=np.nanstd(eig, axis=1), label='Deterministic - SELU')
     plt.bar(np.arange(8)+1 + 0.2, mean, 0.4, yerr=std, label='Stochastic - Tanh')
     plt.xticks(np.arange(8)+1, ['1', '2', '3', '4', '5', '6', '7', '8'])
     plt.xlabel('Number of Layers')
@@ -51,16 +55,16 @@ def main():
 
     widths = [8, 14, 20, 30, 40, 50]
     activation = 'selu'
-    train = np.vstack([np.load('figure1_depth_l2_'+activation+'/det_' + str(i) + 'w_l2_train.npy') for i in widths])
-    pearson = np.abs(np.vstack([np.load('figure1_depth_l2_'+activation+'/det_' + str(i) + 'w_l2_pearson.npy') for i in widths]))
-    spearman = np.abs(np.vstack([np.load('figure1_depth_l2_'+activation+'/det_' + str(i) + 'w_l2_spearman.npy') for i in widths]))
-    eig = np.vstack([np.load('figure1_depth_l2_'+activation+'/det_' + str(i) + 'w_l2_eig.npy') for i in widths])
+    train = np.vstack([np.load('figure1_width_l2_'+activation+'/det_' + str(i) + 'w_l2_train.npy') for i in widths])
+    pearson = np.abs(np.vstack([np.load('figure1_width_l2_'+activation+'/det_' + str(i) + 'w_l2_pearson.npy') for i in widths]))
+    spearman = np.abs(np.vstack([np.load('figure1_width_l2_'+activation+'/det_' + str(i) + 'w_l2_spearman.npy') for i in widths]))
+    eig = np.vstack([np.load('figure1_width_l2_'+activation+'/det_' + str(i) + 'w_l2_eig.npy') for i in widths])
 
     activation = 'tanh'
-    train_vdp = [np.load('figure1_depth_vdp_'+activation+'/vdp_' + str(i) + 'w_train.npy') for i in widths]
-    pearson_vdp = np.abs([np.load('figure1_depth_vdp_'+activation+'/vdp_' + str(i) + 'w_pearson.npy') for i in widths], dtype=object)
-    spearman_vdp = np.abs([np.load('figure1_depth_vdp_'+activation+'/vdp_' + str(i) + 'w_spearman.npy') for i in widths])
-    eig_vdp = [np.load('figure1_depth_vdp_'+activation+'/vdp_' + str(i) + 'w_eig.npy') for i in widths]
+    train_vdp = [np.load('figure1_width_vdp_'+activation+'/vdp_' + str(i) + 'w_train.npy') for i in widths]
+    pearson_vdp = np.abs([np.load('figure1_width_vdp_'+activation+'/vdp_' + str(i) + 'w_pearson.npy') for i in widths], dtype=object)
+    spearman_vdp = np.abs([np.load('figure1_width_vdp_'+activation+'/vdp_' + str(i) + 'w_spearman.npy') for i in widths])
+    eig_vdp = [np.load('figure1_width_vdp_'+activation+'/vdp_' + str(i) + 'w_eig.npy') for i in widths]
 
     plt.bar(np.arange(6)+1 - 0.2, np.mean(spearman, axis=1), 0.4, yerr=np.std(spearman, axis=1), label='Deterministic - SELU')
     mean = [np.mean(a[:, 0]) for a in spearman_vdp]
@@ -82,7 +86,32 @@ def main():
     plt.title('Iris')
     plt.legend()
     plt.show()
-    pass
+
+    activation = 'selu'
+    train = [np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_train.npy') for i in layers]
+    pearson = np.abs([np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_pearson.npy') for i in layers])
+    spearman = np.abs([np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_spearman.npy') for i in layers])
+    eig = [np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_eig.npy') for i in layers]
+
+    mean = [np.mean(a) for a in spearman]
+    std = [np.std(a) for a in spearman]
+    plt.bar(np.arange(8)+1 - 0.2, mean, 0.4, yerr=std, label='Retrain all layers')
+
+    activation = 'selu_frozen'
+    train = [np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_train.npy') for i in layers]
+    pearson = np.abs([np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_pearson.npy') for i in layers])
+    spearman = np.abs([np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_spearman.npy') for i in layers])
+    eig = [np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_eig.npy') for i in layers]
+
+    mean = [np.mean(a) for a in spearman]
+    std = [np.std(a) for a in spearman]
+    plt.bar(np.arange(8)+1 + 0.2, mean, 0.4, yerr=std, label='Retrain Top Layer')
+    plt.xticks(np.arange(8)+1, ['1', '2', '3', '4', '5', '6', '7', '8'])
+    plt.xlabel('Number of Layers')
+    plt.ylabel('Spearman Correlation')
+    plt.title('Iris - Retraining schemes')
+    plt.legend()
+    plt.show()
 
 
 if __name__ == '__main__':

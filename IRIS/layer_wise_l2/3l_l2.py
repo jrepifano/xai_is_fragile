@@ -21,7 +21,7 @@ class Model(torch.nn.Module):
         self.lin2 = torch.nn.Linear(n_nodes, n_nodes)
         self.lin3 = torch.nn.Linear(n_nodes, n_nodes)
         self.lin_last = torch.nn.Linear(n_nodes, n_classes)
-        self.relu = torch.nn.ReLU()
+        self.relu = torch.nn.SELU()
 
     def forward(self, x):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
@@ -47,7 +47,7 @@ class Model(torch.nn.Module):
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
         criterion = torch.nn.CrossEntropyLoss()
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=0.005)
+        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.parameters()), lr=1e-3, weight_decay=0.005)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=100, verbose=False)
         for epoch in range(no_epochs):
             optimizer.zero_grad()
@@ -251,6 +251,10 @@ def exact_difference(model, top_train, max_loss):
         x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
         model = Model(x.shape[1], 5, 3).to('cuda:0')
         model.load_state_dict(torch.load('loo_params_3l.pt'))
+        for param in model.parameters():
+            param.requires_grad = False
+        model.lin_last.weight.requires_grad = True
+        model.lin_last.bias.requires_grad = True
         model.fit(x_train, y_train, 7500)
         exact_loss_diff.append(model.get_indiv_loss(x_test, y_test) - true_loss)
     return exact_loss_diff
@@ -287,7 +291,7 @@ def main():
         eig.append(top_eig)
         pearson.append(pearsonr(exact_loss_diff, approx_loss_diff)[0])
         spearman.append(spearmanr(exact_loss_diff, approx_loss_diff)[0])
-        print('Done {}/{} in {:.2f} minutes'.format(i+1, 10, (time.time()-start_time)/60))
+        print('Done {}/{} in {:.2f} minutes'.format(i+1, 50, (time.time()-start_time)/60))
         if i % 10 == 0:
             np.save('figure1/det_3l_l2_train.npy', train)
             np.save('figure1/det_3l_l2_eig.npy', eig)

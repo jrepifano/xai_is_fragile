@@ -51,7 +51,7 @@ class lenet(pl.LightningModule):
         loss = self.criterion(logits, y)
         acc = self.train_acc(logits.softmax(dim=-1), y)
         self.log('loss', loss)
-        self.count += len(y)
+        # self.count += len(y)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -66,9 +66,9 @@ class lenet(pl.LightningModule):
         self.train_acc.reset()
         self.test_acc.reset()
 
-    def on_train_epoch_end(self):
-        print(self.count)
-        self.count = 0
+    # def on_train_epoch_end(self):
+    #     print(self.count)
+    #     self.count = 0
 
     def train_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
@@ -142,7 +142,7 @@ def get_influence(test_idx, batch_size):
     for itr, (x_test, y_test) in enumerate(model.test_dataloader()):
         pass
     infl = influence_wrapper(model, None, None, x_test, y_test, model.train_dataloader())
-    i_up_loss.append(infl.i_up_loss(model.lin_last.weight, estimate=True))
+    i_up_loss.append(infl.i_up_loss(model.lin_last.weight, estimate=False))
     i_up_loss = np.hstack(i_up_loss)
     return i_up_loss
 
@@ -152,6 +152,11 @@ def finetune(gpu, top_40, test_idx, true_loss, batch_size):
     for counter, idx in enumerate(top_40):
         model = lenet(batch_size=batch_size, train_idx_to_remove=idx, test_idx=test_idx)
         model.load_state_dict(torch.load('lenet.pt'))
+        for param in model.parameters():
+            param.requires_grad = False
+        model.lin_last.weight.requires_grad = True
+        model.lin_last.bias.requires_grad = True
+
         no_epochs = 100
         early_stop_callback = pl.callbacks.early_stopping.EarlyStopping(
             monitor='loss',
@@ -184,7 +189,3 @@ def train(gpu, batch_size):
     # trainer.tune(model)
     trainer.fit(model)
     torch.save(model.state_dict(), 'lenet.pt')
-    model.eval()
-    train_losses = model.get_losses(set='train')
-    test_losses = model.get_losses(set='test')
-    return train_losses, test_losses

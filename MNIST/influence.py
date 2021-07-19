@@ -36,9 +36,10 @@ class influence_wrapper:
     def get_hessian(self, weights):
         dim_1, dim_2 = weights.shape[0], weights.shape[1]
         H_i = torch.zeros((dim_1, dim_2, dim_1, dim_2), device=self.device)
-        for i in range(len(self.x_train)):
-            self.pointer = i
-            H_i += torch.autograd.functional.hessian(self.get_loss, weights, vectorize=True)
+        for itr, (x_train, y_train) in enumerate(self.trainloader):
+            self.x_train = x_train
+            self.y_train = y_train
+            H_i += torch.autograd.functional.hessian(self.get_train_loss, weights, vectorize=True)
         H = H_i / len(self.x_train)
         square_size = int(np.sqrt(torch.numel(H)))
         H = H.view(square_size, square_size)
@@ -95,8 +96,11 @@ class influence_wrapper:
             H = self.get_hessian(weights)
             H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
             H_inv = torch.inverse(H)
-            for i in range(len(self.x_train)):
-                self.pointer = i
-                train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
-                i_up_loss.append((test_grad.view(1, -1) @ (H_inv @ train_grad.float().view(-1, 1))).item())
+            for itr, (x_train, y_train) in enumerate(self.trainloader):
+                self.x_train = x_train
+                self.y_train = y_train
+                for i in range(len(self.x_train)):
+                    self.pointer = i
+                    train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
+                    i_up_loss.append((test_grad.view(1, -1) @ (H_inv @ train_grad.float().view(-1, 1))).item())
         return i_up_loss

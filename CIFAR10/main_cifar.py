@@ -7,7 +7,7 @@ from lenet_cifar import lenet, train, finetune, get_influence
 def main():
     est_loss_diffs = list()
     true_loss_diffs = list()
-    for i in range(50):
+    for i in range(100):
         gpu = '2'
         batch_size = 1024
         train(gpu, batch_size=batch_size)
@@ -18,15 +18,15 @@ def main():
         max_loss = np.argsort(test_losses)[-1]
         true_loss = test_losses[max_loss]
         i_up_loss = get_influence(max_loss, batch_size=batch_size)
-        top_40 = np.argsort(np.abs(i_up_loss))[::-1][:40]
+        top_40 = np.argsort(i_up_loss)[::-1][:40]
         est_loss_diffs.append(i_up_loss[top_40])
         # np.savetxt('est_loss_diffs.csv', est_loss_diffs, delimiter=',')
         true_loss_diffs.append(finetune(gpu, top_40, max_loss, true_loss, batch_size=batch_size))
         # np.savetxt('true_loss_diffs.csv', true_loss_diffs, delimiter=',')
         # print(pearsonr(true_loss_diffs[0], est_loss_diffs[0]))
         # print(spearmanr(true_loss_diffs[0], est_loss_diffs[0]))
-        np.save('est_loss_diffs_cifar.npy', est_loss_diffs, allow_pickle=True)
-        np.save('true_loss_diffs_cifar.npy', true_loss_diffs, allow_pickle=True)
+        np.save('est_loss_diffs_abs.npy', est_loss_diffs, allow_pickle=True)
+        np.save('true_loss_diffs_abs.npy', true_loss_diffs, allow_pickle=True)
         print('{}/{}'.format(i, 50))
 
 
