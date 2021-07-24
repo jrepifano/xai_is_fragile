@@ -1,31 +1,37 @@
 import torch
 import numpy as np
 from scipy.stats import pearsonr, spearmanr
-from lenet import lenet, train, finetune, get_influence
+from lenet_vdp import lenet, train, finetune, get_influence
 
 
 def main():
     est_loss_diffs = list()
     true_loss_diffs = list()
     for i in range(100):
-        gpu = '0'
+        gpu = '2'
         batch_size = 1024
         # train(gpu, batch_size=batch_size)
         model = lenet(batch_size=batch_size)
-        model.load_state_dict(torch.load('lenet.pt'))
+        model.load_state_dict(torch.load('lenet_vdp.pt'))
+        model.alpha, model.beta, model.tau = np.load('hyperparams.npy', allow_pickle=True)
+        model.alpha = 0
+        model.scale = True
         model.eval()
         test_losses = model.get_losses(set='test')
         max_loss = np.argsort(test_losses)[-1]
         true_loss = test_losses[max_loss]
+
         i_up_loss = get_influence(max_loss, batch_size=batch_size)
         top_40 = np.argsort(i_up_loss)[::-1][:10]
         est_loss_diffs.append(i_up_loss[top_40])
         # np.savetxt('est_loss_diffs.csv', est_loss_diffs, delimiter=',')
         true_loss_diffs.append(finetune(gpu, top_40, max_loss, true_loss, batch_size=batch_size))
         # np.savetxt('true_loss_diffs.csv', true_loss_diffs, delimiter=',')
-        # break
-        np.save('est_loss_diffs_abs.npy', est_loss_diffs, allow_pickle=True)
-        np.save('true_loss_diffs_abs.npy', true_loss_diffs, allow_pickle=True)
+        print(pearsonr(est_loss_diffs[0], true_loss_diffs[0]))
+        print(spearmanr(est_loss_diffs[0], true_loss_diffs[0]))
+        break
+        # np.save('est_loss_diffs_abs.npy', est_loss_diffs, allow_pickle=True)
+        # np.save('true_loss_diffs_abs.npy', true_loss_diffs, allow_pickle=True)
         # print('{}/{}'.format(i, 50))
 
 

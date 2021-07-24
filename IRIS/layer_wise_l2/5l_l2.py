@@ -11,7 +11,16 @@ from sklearn.preprocessing import StandardScaler
 
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+
+
+# Random Seed - Negating the randomizing effect
+np.random.seed(6)
+
+
+# Seeds : 2, 5, 10, 13, 15, 20
+# Random Seed for tensorflow
+torch.manual_seed(14)
 
 
 class Model(torch.nn.Module):
@@ -23,7 +32,7 @@ class Model(torch.nn.Module):
         self.lin4 = torch.nn.Linear(n_nodes, n_nodes)
         self.lin5 = torch.nn.Linear(n_nodes, n_nodes)
         self.lin_last = torch.nn.Linear(n_nodes, n_classes)
-        self.relu = torch.nn.SELU()
+        self.relu = torch.nn.Tanh()
 
     def forward(self, x):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
@@ -94,21 +103,21 @@ class influence_wrapper:
         criterion = torch.nn.CrossEntropyLoss()
         logits = self.model.bottleneck(self.x_train[self.pointer].reshape(1, -1))
         logits = logits @ weights.T + self.model.lin_last.bias
-        loss = criterion(logits, torch.tensor([self.y_train[self.pointer]], device=self.device))
+        loss = criterion(logits, torch.tensor([self.y_train[self.pointer]], device=self.device).long())
         return loss
 
     def get_train_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
         logits = self.model.bottleneck(self.x_train)
         logits = logits @ weights.T + self.model.lin_last.bias
-        loss = criterion(logits, torch.tensor(self.y_train, device=self.device))
+        loss = criterion(logits, torch.tensor(self.y_train, device=self.device).long())
         return loss
 
     def get_test_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
         logits = self.model.bottleneck(self.x_test.reshape(1, -1))
         logits = logits @ weights.T + self.model.lin_last.bias
-        loss = criterion(logits, torch.tensor(self.y_test, device=self.device))
+        loss = criterion(logits, torch.tensor(self.y_test, device=self.device).long())
         return loss
 
     def get_hessian(self, weights):

@@ -156,7 +156,7 @@ def ELBOLoss_2(outputs, y, model=None):
     log_det = torch.mean(torch.log(torch.prod(sigma_clamped, dim=1)))
     nll = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
     if model == None:
-        return 0.001 * log_det + nll
+        return nll
     else:
         kl = gather_kl(model)
         return model.alpha * log_det + nll + model.tau * torch.stack([a * b for a, b in zip(model.beta, kl)]).sum()

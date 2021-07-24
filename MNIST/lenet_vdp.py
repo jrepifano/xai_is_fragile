@@ -43,6 +43,7 @@ class lenet(pl.LightningModule):
         self.train_idx_to_remove = train_idx_to_remove
         self.test_idx = test_idx
         self.scale = False
+        self.alpha, self.beta, self.tau = 1, 1, 1
         self.train_acc = torchmetrics.Accuracy()
         self.test_acc = torchmetrics.Accuracy()
         self.criterion = torch.nn.CrossEntropyLoss()
@@ -172,6 +173,7 @@ class lenet(pl.LightningModule):
             set = False
         else:
             raise Exception('Invalid set')
+        criterion = torch.nn.CrossEntropyLoss(reduction='none')
         transform = transforms.Compose([transforms.ToTensor(),
                                         transforms.Normalize((0.1307,), (0.3081,)), transforms.Pad(2)])
         mnist = MNIST(os.getcwd(), train=set, download=True, transform=transform)
@@ -181,35 +183,30 @@ class lenet(pl.LightningModule):
             self.dl.targets = self.mnist_test.targets[self.test_idx].unsqueeze(0)
         losses = list()
         for itr, (x, y) in enumerate(dl):
-            mu, sigma = self.forward(x)
-            log_det, nll = vdp.ELBOLoss(mu, sigma, y)
-            kl = vdp.gather_kl(self)
-            if not self.scale:
-                self.alpha, self.beta, self.tau = scale_hyperp(log_det, nll, kl)
-                self.scale = True
-            losses.append((self.alpha * log_det + nll + self.tau * torch.stack([a * b for a, b in zip(self.beta, kl)]).sum()).item())
+            logits, sigma = self.bottleneck(x)
+            logits = logits @ self.lin_last.mu.weight.T
+            losses.append(criterion(logits, y).detach().cpu().numpy())
         return np.hstack(losses)
 
     def get_indiv_loss(self, dl):
+        criterion = torch.nn.CrossEntropyLoss()
         for idx, (x, y) in enumerate(dl):
-            mu, sigma = self(x)
-            log_det, nll = vdp.ELBOLoss(mu, sigma, y)
-            kl = vdp.gather_kl(self)
-            if not self.scale:
-                self.alpha, self.beta, self.tau = scale_hyperp(log_det, nll, kl)
-                self.scale = True
-            loss = self.alpha * log_det + nll + self.tau * torch.stack([a * b for a, b in zip(self.beta, kl)]).sum()
+            logits, sigma = self.bottleneck(x)
+            logits = logits @ self.lin_last.mu.weight.T
+            loss = criterion(logits, y)
             return loss.item()
-
 
 def get_influence(test_idx, batch_size):
     model = lenet(batch_size=batch_size, train_idx_to_remove=None, test_idx=test_idx)
     model.load_state_dict(torch.load('lenet_vdp.pt'))
+    model.alpha, model.beta, model.tau = np.load('hyperparams.npy', allow_pickle=True)
+    model.alpha = 0
+    model.scale = True
     i_up_loss = list()
     for itr, (x_test, y_test) in enumerate(model.test_dataloader()):
         pass
     infl = influence_wrapper(model, None, None, x_test, y_test, model.train_dataloader())
-    i_up_loss.append(infl.i_up_loss(model.lin_last.mu.weight, model.lin_last.sigma.weight, estimate=False))
+    i_up_loss.append(infl.i_up_loss(model.lin_last.mu.weight, model.lin_last.sigma.weight, estimate=True))
     i_up_loss = np.hstack(i_up_loss)
     return i_up_loss
 
@@ -219,6 +216,9 @@ def finetune(gpu, top_40, test_idx, true_loss, batch_size):
     for counter, idx in enumerate(top_40):
         model = lenet(batch_size=batch_size, train_idx_to_remove=idx, test_idx=test_idx)
         model.load_state_dict(torch.load('lenet_vdp.pt'))
+        model.alpha, model.beta, model.tau = np.load('hyperparams.npy', allow_pickle=True)
+        model.alpha = 0
+        model.scale = True
         no_epochs = 100
         early_stop_callback = pl.callbacks.early_stopping.EarlyStopping(
             monitor='loss',
@@ -250,7 +250,7 @@ def train(gpu, batch_size):
     # trainer.tune(model)
     trainer.fit(model)
     torch.save(model.state_dict(), 'lenet_vdp.pt')
-    model.eval()
-    train_losses = model.get_losses(set='train')
-    test_losses = model.get_losses(set='test')
-    return train_losses, test_losses
+    np.save('hyperparams.npy', (model.alpha, model.beta, model.tau))
+    # model.eval()
+    # train_losses = model.get_losses(set='train')
+    # test_losses = model.get_losses(set='test')

@@ -18,10 +18,12 @@ class influence_wrapper:
         sigma_y = (vdp.softplus(sigma) @ sigma_x.T).T + \
                   (mu ** 2 @ sigma_x.T).T + \
                   (mu_x ** 2 @ vdp.softplus(sigma).T)
+        criterion = torch.nn.CrossEntropyLoss()
+        loss = criterion(mu_y, torch.tensor([self.y_train[self.pointer]], device=self.device).long())
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor([self.y_train[self.pointer]], device=self.device))
+        # loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor([self.y_train[self.pointer]], device=self.device))
         return loss
 
     def get_train_loss(self, mu, sigma):
@@ -30,10 +32,12 @@ class influence_wrapper:
         sigma_y = (vdp.softplus(sigma) @ sigma_x.T).T + \
                   (mu ** 2 @ sigma_x.T).T + \
                   (mu_x ** 2 @ vdp.softplus(sigma).T)
+        criterion = torch.nn.CrossEntropyLoss()
+        loss = criterion(mu_y, torch.tensor(self.y_train, device=self.device).long())
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_train, device=self.device))
+        # loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_train, device=self.device))
         return loss
 
     def get_test_loss(self, mu, sigma):
@@ -42,10 +46,12 @@ class influence_wrapper:
         sigma_y = (vdp.softplus(sigma) @ sigma_x.T).T + \
                   (mu ** 2 @ sigma_x.T).T + \
                   (mu_x ** 2 @ vdp.softplus(sigma).T)
+        criterion = torch.nn.CrossEntropyLoss()
+        loss = criterion(mu_y, torch.tensor(self.y_test, device=self.device).long())
         mu_y = torch.nn.functional.softmax(mu_y, dim=1)
         J = mu_y*(1-mu_y)
         sigma_y = (J**2) * sigma_y
-        loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_test, device=self.device))
+        # loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_test, device=self.device))
         return loss
 
     def get_hessian(self, mu, sigma):
@@ -61,7 +67,7 @@ class influence_wrapper:
         return H
 
     def LiSSA(self, v, mu, sigma):
-        damping = 0.9
+        damping = 0.01
         scale = 10
         ihvp = None
         prev_norm = 1
@@ -70,12 +76,15 @@ class influence_wrapper:
         diff = prev_norm
         trainloader = iter(self.model.train_dataloader())
         num_samples = 60000
-        while diff > 0.0001 and count < 10000:
+        while diff > 0.001 and count < 10000:
             try:
                 self.x_train, self.y_train = next(trainloader)
             except StopIteration:
                 trainloader = iter(self.model.train_dataloader())
             hvp = torch.autograd.functional.hvp(self.get_train_loss, (mu, sigma), (cur_estimate, torch.zeros_like(cur_estimate)))[1][0]
+            if torch.isnan(hvp).any():
+                count += 1
+                continue
             cur_estimate = [a + (1 - damping) * b - c / scale for (a, b, c) in zip(v, cur_estimate, hvp)]
             cur_estimate = torch.squeeze(torch.stack(cur_estimate))
             numpy_est = cur_estimate.detach().cpu().numpy()
@@ -84,7 +93,7 @@ class influence_wrapper:
             diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
             prev_norm = np.linalg.norm(np.concatenate(numpy_est))
             # if count % 500 == 0:
-            print('Recursion Depth {}; Norm: {:.2f}'.format(count, prev_norm))
+            print('Recursion Depth {}; Norm: {:.6f}'.format(count, prev_norm))
         if ihvp is None:
             ihvp = [b/scale for b in cur_estimate]
         else:
