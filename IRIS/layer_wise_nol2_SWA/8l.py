@@ -8,22 +8,25 @@ from sklearn.metrics import accuracy_score
 from scipy.stats import pearsonr, spearmanr
 from sklearn.model_selection import LeaveOneOut
 from sklearn.preprocessing import StandardScaler
+from torch.optim.swa_utils import AveragedModel, SWALR
 
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
-os.environ["CUDA_VISIBLE_DEVICES"] = '4'
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
-# Random Seed - Negating the randomizing effect
-np.random.seed(6)
-
-# Seeds : 2, 5, 10, 13, 15, 20
-# Random Seed for tensorflow
-torch.manual_seed(14)
 
 class Model(torch.nn.Module):
     def __init__(self, n_feats, n_nodes, n_classes):
         super(Model, self).__init__()
+        self.swa_model = None
         self.lin1 = torch.nn.Linear(n_feats, n_nodes)
+        self.lin2 = torch.nn.Linear(n_nodes, n_nodes)
+        self.lin3 = torch.nn.Linear(n_nodes, n_nodes)
+        self.lin4 = torch.nn.Linear(n_nodes, n_nodes)
+        self.lin5 = torch.nn.Linear(n_nodes, n_nodes)
+        self.lin6 = torch.nn.Linear(n_nodes, n_nodes)
+        self.lin7 = torch.nn.Linear(n_nodes, n_nodes)
+        self.lin8 = torch.nn.Linear(n_nodes, n_nodes)
         self.lin_last = torch.nn.Linear(n_nodes, n_classes)
         self.relu = torch.nn.SELU()
 
@@ -32,6 +35,13 @@ class Model(torch.nn.Module):
         if not torch.is_tensor(x):
             x = torch.tensor(x, requires_grad=True, device=device, dtype=torch.float32)
         x = self.relu(self.lin1(x))
+        x = self.relu(self.lin2(x))
+        x = self.relu(self.lin3(x))
+        x = self.relu(self.lin4(x))
+        x = self.relu(self.lin5(x))
+        x = self.relu(self.lin6(x))
+        x = self.relu(self.lin7(x))
+        x = self.relu(self.lin8(x))
         x = self.lin_last(x)
         return x
 
@@ -40,6 +50,13 @@ class Model(torch.nn.Module):
         if not torch.is_tensor(x):
             x = torch.tensor(x, requires_grad=True, device=device, dtype=torch.float32)
         x = self.relu(self.lin1(x))
+        x = self.relu(self.lin2(x))
+        x = self.relu(self.lin3(x))
+        x = self.relu(self.lin4(x))
+        x = self.relu(self.lin5(x))
+        x = self.relu(self.lin6(x))
+        x = self.relu(self.lin7(x))
+        x = self.relu(self.lin8(x))
         return x
 
     def fit(self, x, y, no_epochs=1000):
@@ -47,21 +64,31 @@ class Model(torch.nn.Module):
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
         criterion = torch.nn.CrossEntropyLoss()
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=0.005)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=100, verbose=False)
+        swa_scheduler = SWALR(optimizer, swa_lr=1e-3, anneal_epochs=round(0.1 * no_epochs), anneal_strategy='cos')
+        self.swa_model = AveragedModel(self)
+        swa_start = round(0.75 * no_epochs)
         for epoch in range(no_epochs):
             optimizer.zero_grad()
             logits = self.forward(x)
             loss = criterion(logits, y)
             loss.backward()
             optimizer.step()
-            scheduler.step(loss.item())
+            if epoch > swa_start:
+                self.swa_model.update_parameters(self)
+                swa_scheduler.step()
+            else:
+                scheduler.step(loss.item())
 
     def score(self, x, y):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
-        logits = torch.nn.functional.softmax(self.forward(x), dim=1)
+        if self.swa_model is not None:
+            logits = torch.nn.functional.softmax(self.swa_model.module.forward(x), dim=1)
+        else:
+            logits = torch.nn.functional.softmax(self.forward(x), dim=1)
         score = torch.sum(torch.argmax(logits, dim=1) == y)/len(x)
         return score.cpu().numpy()
 
@@ -70,7 +97,10 @@ class Model(torch.nn.Module):
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
         criterion = torch.nn.CrossEntropyLoss(reduction='none')
-        logits = self.forward(x)
+        if self.swa_model is not None:
+            logits = self.swa_model.module.forward(x)
+        else:
+            logits = self.forward(x)
         loss = criterion(logits, y)
         return [l.item() for l in loss] if len(loss) > 1 else loss.item()
 
@@ -86,23 +116,32 @@ class influence_wrapper:
 
     def get_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
-        logits = self.model.bottleneck(self.x_train[self.pointer].reshape(1, -1))
-        logits = logits @ weights.T + self.model.lin_last.bias
-        loss = criterion(logits, torch.tensor([self.y_train[self.pointer]], device=self.device))
+        if self.model.swa_model is not None:
+            logits = self.model.swa_model.module.bottleneck(self.x_train[self.pointer].reshape(1, -1))
+        else:
+            logits = self.model.bottleneck(self.x_train[self.pointer].reshape(1, -1))
+        logits = logits @ weights.T
+        loss = criterion(logits, torch.tensor([self.y_train[self.pointer]], device=self.device).long())
         return loss
 
     def get_train_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
-        logits = self.model.bottleneck(self.x_train)
-        logits = logits @ weights.T + self.model.lin_last.bias
-        loss = criterion(logits, torch.tensor(self.y_train, device=self.device))
+        if self.model.swa_model is not None:
+            logits = self.model.swa_model.module.bottleneck(self.x_train)
+        else:
+            logits = self.model.bottleneck(self.x_train)
+        logits = logits @ weights.T
+        loss = criterion(logits, torch.tensor(self.y_train, device=self.device).long())
         return loss
 
     def get_test_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
-        logits = self.model.bottleneck(self.x_test.reshape(1, -1))
-        logits = logits @ weights.T + self.model.lin_last.bias
-        loss = criterion(logits, torch.tensor(self.y_test, device=self.device))
+        if self.model.swa_model is not None:
+            logits = self.model.swa_model.module.bottleneck(self.x_test.reshape(1, -1))
+        else:
+            logits = self.model.bottleneck(self.x_test.reshape(1, -1))
+        logits = logits @ weights.T
+        loss = criterion(logits, torch.tensor(self.y_test, device=self.device).long())
         return loss
 
     def get_hessian(self, weights):
@@ -186,7 +225,7 @@ def get_hessian_info(model, x, y):
     if not torch.is_tensor(x):
         x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
     criterion = torch.nn.CrossEntropyLoss()
-    hessian_comp = hessian(model, criterion, data=(x, y), cuda=True)
+    hessian_comp = hessian(model.swa_model, criterion, data=(x, y), cuda=True)
     top_eigenvalues, top_eigenvector = hessian_comp.eigenvalues()
     return top_eigenvalues[-1]
 
@@ -200,7 +239,7 @@ def find_max_loss():
         y_train, y_test = y[train_index], y[test_index]
         scaler = StandardScaler().fit(x_train)
         x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
-        model = Model(x.shape[1], 50, 3).to('cuda:0')
+        model = Model(x.shape[1], 5, 3).to('cuda:0')
         model.fit(x_train, y_train)
         train_acc.append(model.score(x_train, y_train))
         test_loss.append(model.get_indiv_loss(x_test, y_test))
@@ -219,14 +258,14 @@ def find_top_train(max_loss=83):
     y_train, y_test = y[train_index], y[test_index]
     scaler = StandardScaler().fit(x_train)
     x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
-    model = Model(x.shape[1], 50, 3).to('cuda:0')
+    model = Model(x.shape[1], 5, 3).to('cuda:0')
     model.fit(x_train, y_train, 60000)
     train_acc = model.score(x_train, y_train)
     train_loss = model.get_indiv_loss(x_train, y_train)
     to_look = int(1/6 * len(x-1))
     top_train = np.argsort(train_loss)[::-1][:to_look]
     top_eig = get_hessian_info(model, x_train, y_train)
-    torch.save(model.state_dict(), 'loo_params_50w.pt')
+    torch.save(model.state_dict(), 'loo_params_8l.pt')
     return top_train, model, top_eig, train_acc
 
 
@@ -249,16 +288,19 @@ def exact_difference(model, top_train, max_loss):
         scaler = StandardScaler().fit(x_train)
         x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
         x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
-        model = Model(x.shape[1], 50, 3).to('cuda:0')
-        model.load_state_dict(torch.load('loo_params_50w.pt'))
+        model = Model(x.shape[1], 5, 3).to('cuda:0')
+        model.swa_model = AveragedModel(model)
+        model.load_state_dict(torch.load('loo_params_8l.pt'))
         model.fit(x_train, y_train, 7500)
         exact_loss_diff.append(model.get_indiv_loss(x_test, y_test) - true_loss)
     return exact_loss_diff
 
 
 def approx_difference(model, top_train, max_loss):
-    model.load_state_dict(torch.load('loo_params_50w.pt'))
     x, y = load_iris(return_X_y=True)
+    model = Model(x.shape[1], 5, 3).to('cuda:0')
+    model.swa_model = AveragedModel(model)
+    model.load_state_dict(torch.load('loo_params_8l.pt'))
     train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
     test_index = np.asarray([max_loss])
     x_train, x_test = x[train_index], x[test_index]
@@ -266,14 +308,14 @@ def approx_difference(model, top_train, max_loss):
     scaler = StandardScaler().fit(x_train)
     x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
     infl = influence_wrapper(model, x_train, y_train, x_test, y_test)
-    approx_loss_diff = np.asarray(infl.i_up_loss(model.lin_last.weight, top_train, estimate=False))
+    approx_loss_diff = np.asarray(infl.i_up_loss(model.swa_model.module.lin_last.weight, top_train, estimate=False))
     return approx_loss_diff
 
 
 def main():
     outer_start_time = time.time()
     train, eig, pearson, spearman = list(), list(), list(), list()
-    for i in range(1):
+    for i in range(50):
         start_time = time.time()
         # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
         # print('Done max loss')
@@ -287,16 +329,16 @@ def main():
         eig.append(top_eig)
         pearson.append(pearsonr(exact_loss_diff, approx_loss_diff)[0])
         spearman.append(spearmanr(exact_loss_diff, approx_loss_diff)[0])
-        print('Done {}/{} in {:.2f} minutes'.format(i+1, 10, (time.time()-start_time)/60))
+        print('Done {}/{} in {:.2f} minutes'.format(i+1, 50, (time.time()-start_time)/60))
         if i % 10 == 0:
-            np.save('figure1/det_50w_l2_train.npy', train)
-            np.save('figure1/det_50w_l2_eig.npy', eig)
-            np.save('figure1/det_50w_l2_pearson.npy', pearson)
-            np.save('figure1/det_50w_l2_spearman.npy', spearman)
-    np.save('figure1/det_50w_l2_train.npy', train)
-    np.save('figure1/det_50w_l2_eig.npy', eig)
-    np.save('figure1/det_50w_l2_pearson.npy', pearson)
-    np.save('figure1/det_50w_l2_spearman.npy', spearman)
+            np.save('figure1/det_8l_train.npy', train)
+            np.save('figure1/det_8l_eig.npy', eig)
+            np.save('figure1/det_8l_pearson.npy', pearson)
+            np.save('figure1/det_8l_spearman.npy', spearman)
+    np.save('figure1/det_8l_train.npy', train)
+    np.save('figure1/det_8l_eig.npy', eig)
+    np.save('figure1/det_8l_pearson.npy', pearson)
+    np.save('figure1/det_8l_spearman.npy', spearman)
     print('Finished Iter in {:.2f} minutes'.format((time.time()-outer_start_time)/60))
 
     pass

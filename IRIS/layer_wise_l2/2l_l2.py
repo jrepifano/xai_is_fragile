@@ -11,8 +11,14 @@ from sklearn.preprocessing import StandardScaler
 
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
+# Random Seed - Negating the randomizing effect
+np.random.seed(6)
+
+# Seeds : 2, 5, 10, 13, 15, 20
+# Random Seed for tensorflow
+torch.manual_seed(14)
 
 class Model(torch.nn.Module):
     def __init__(self, n_feats, n_nodes, n_classes):
@@ -20,7 +26,7 @@ class Model(torch.nn.Module):
         self.lin1 = torch.nn.Linear(n_feats, n_nodes)
         self.lin2 = torch.nn.Linear(n_nodes, n_nodes)
         self.lin_last = torch.nn.Linear(n_nodes, n_classes)
-        self.relu = torch.nn.SELU()
+        self.relu = torch.nn.Tanh()
 
     def forward(self, x):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
@@ -85,21 +91,21 @@ class influence_wrapper:
         criterion = torch.nn.CrossEntropyLoss()
         logits = self.model.bottleneck(self.x_train[self.pointer].reshape(1, -1))
         logits = logits @ weights.T + self.model.lin_last.bias
-        loss = criterion(logits, torch.tensor([self.y_train[self.pointer]], device=self.device))
+        loss = criterion(logits, torch.tensor([self.y_train[self.pointer]], device=self.device).long())
         return loss
 
     def get_train_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
         logits = self.model.bottleneck(self.x_train)
         logits = logits @ weights.T + self.model.lin_last.bias
-        loss = criterion(logits, torch.tensor(self.y_train, device=self.device))
+        loss = criterion(logits, torch.tensor(self.y_train, device=self.device).long())
         return loss
 
     def get_test_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
         logits = self.model.bottleneck(self.x_test.reshape(1, -1))
         logits = logits @ weights.T + self.model.lin_last.bias
-        loss = criterion(logits, torch.tensor(self.y_test, device=self.device))
+        loss = criterion(logits, torch.tensor(self.y_test, device=self.device).long())
         return loss
 
     def get_hessian(self, weights):
@@ -274,7 +280,7 @@ def approx_difference(model, top_train, max_loss):
 def main():
     outer_start_time = time.time()
     train, eig, pearson, spearman = list(), list(), list(), list()
-    for i in range(50):
+    for i in range(1):
         start_time = time.time()
         # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
         # print('Done max loss')
@@ -289,16 +295,18 @@ def main():
         pearson.append(pearsonr(exact_loss_diff, approx_loss_diff)[0])
         spearman.append(spearmanr(exact_loss_diff, approx_loss_diff)[0])
         print('Done {}/{} in {:.2f} minutes'.format(i+1, 50, (time.time()-start_time)/60))
-        if i % 10 == 0:
-            np.save('figure1/det_2l_l2_train.npy', train)
-            np.save('figure1/det_2l_l2_eig.npy', eig)
-            np.save('figure1/det_2l_l2_pearson.npy', pearson)
-            np.save('figure1/det_2l_l2_spearman.npy', spearman)
-    np.save('figure1/det_2l_l2_train.npy', train)
-    np.save('figure1/det_2l_l2_eig.npy', eig)
-    np.save('figure1/det_2l_l2_pearson.npy', pearson)
-    np.save('figure1/det_2l_l2_spearman.npy', spearman)
-    print('Finished Iter in {:.2f} minutes'.format((time.time()-outer_start_time)/60))
+        print(pearson)
+        print(spearman)
+        # if i % 10 == 0:
+        #     np.save('figure1/det_2l_l2_train.npy', train)
+        #     np.save('figure1/det_2l_l2_eig.npy', eig)
+        #     np.save('figure1/det_2l_l2_pearson.npy', pearson)
+        #     np.save('figure1/det_2l_l2_spearman.npy', spearman)
+    # np.save('figure1/det_2l_l2_train.npy', train)
+    # np.save('figure1/det_2l_l2_eig.npy', eig)
+    # np.save('figure1/det_2l_l2_pearson.npy', pearson)
+    # np.save('figure1/det_2l_l2_spearman.npy', spearman)
+    # print('Finished Iter in {:.2f} minutes'.format((time.time()-outer_start_time)/60))
 
     pass
 

@@ -11,7 +11,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
 
 # Random Seed - Negating the randomizing effect
@@ -292,7 +292,7 @@ def approx_difference(model, top_train, max_loss):
 def main():
     outer_start_time = time.time()
     train, eig, pearson, spearman = list(), list(), list(), list()
-    for i in range(50):
+    for i in range(1):
         start_time = time.time()
         # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
         # print('Done max loss')

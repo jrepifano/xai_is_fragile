@@ -11,8 +11,14 @@ from sklearn.preprocessing import StandardScaler
 
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
+# Random Seed - Negating the randomizing effect
+np.random.seed(6)
+
+# Seeds : 2, 5, 10, 13, 15, 20
+# Random Seed for tensorflow
+torch.manual_seed(14)
 
 class Model(torch.nn.Module):
     def __init__(self, n_feats, n_nodes, n_classes):
@@ -21,7 +27,7 @@ class Model(torch.nn.Module):
         self.lin2 = torch.nn.Linear(n_nodes, n_nodes)
         self.lin3 = torch.nn.Linear(n_nodes, n_nodes)
         self.lin_last = torch.nn.Linear(n_nodes, n_classes)
-        self.relu = torch.nn.SELU()
+        self.relu = torch.nn.Tanh()
 
     def forward(self, x):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
@@ -277,7 +283,7 @@ def approx_difference(model, top_train, max_loss):
 def main():
     outer_start_time = time.time()
     train, eig, pearson, spearman = list(), list(), list(), list()
-    for i in range(50):
+    for i in range(1):
         start_time = time.time()
         # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
         # print('Done max loss')

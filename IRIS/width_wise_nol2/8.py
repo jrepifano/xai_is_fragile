@@ -11,14 +11,8 @@ from sklearn.preprocessing import StandardScaler
 
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
-os.environ["CUDA_VISIBLE_DEVICES"] = '4'
+os.environ["CUDA_VISIBLE_DEVICES"] = '5'
 
-# Random Seed - Negating the randomizing effect
-np.random.seed(6)
-
-# Seeds : 2, 5, 10, 13, 15, 20
-# Random Seed for tensorflow
-torch.manual_seed(14)
 
 class Model(torch.nn.Module):
     def __init__(self, n_feats, n_nodes, n_classes):
@@ -47,7 +41,7 @@ class Model(torch.nn.Module):
         if not torch.is_tensor(x):
             x, y = torch.from_numpy(x).float().to(device), torch.from_numpy(y).long().to(device)
         criterion = torch.nn.CrossEntropyLoss()
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=0.005)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=100, verbose=False)
         for epoch in range(no_epochs):
             optimizer.zero_grad()
@@ -200,7 +194,7 @@ def find_max_loss():
         y_train, y_test = y[train_index], y[test_index]
         scaler = StandardScaler().fit(x_train)
         x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
-        model = Model(x.shape[1], 50, 3).to('cuda:0')
+        model = Model(x.shape[1], 8, 3).to('cuda:0')
         model.fit(x_train, y_train)
         train_acc.append(model.score(x_train, y_train))
         test_loss.append(model.get_indiv_loss(x_test, y_test))
@@ -219,14 +213,14 @@ def find_top_train(max_loss=83):
     y_train, y_test = y[train_index], y[test_index]
     scaler = StandardScaler().fit(x_train)
     x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
-    model = Model(x.shape[1], 50, 3).to('cuda:0')
+    model = Model(x.shape[1], 8, 3).to('cuda:0')
     model.fit(x_train, y_train, 60000)
     train_acc = model.score(x_train, y_train)
     train_loss = model.get_indiv_loss(x_train, y_train)
     to_look = int(1/6 * len(x-1))
     top_train = np.argsort(train_loss)[::-1][:to_look]
     top_eig = get_hessian_info(model, x_train, y_train)
-    torch.save(model.state_dict(), 'loo_params_50w.pt')
+    torch.save(model.state_dict(), 'loo_params_8w.pt')
     return top_train, model, top_eig, train_acc
 
 
@@ -249,15 +243,15 @@ def exact_difference(model, top_train, max_loss):
         scaler = StandardScaler().fit(x_train)
         x_train, x_test = scaler.transform(x_train), scaler.transform(x_test)
         x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
-        model = Model(x.shape[1], 50, 3).to('cuda:0')
-        model.load_state_dict(torch.load('loo_params_50w.pt'))
+        model = Model(x.shape[1], 8, 3).to('cuda:0')
+        model.load_state_dict(torch.load('loo_params_8w.pt'))
         model.fit(x_train, y_train, 7500)
         exact_loss_diff.append(model.get_indiv_loss(x_test, y_test) - true_loss)
     return exact_loss_diff
 
 
 def approx_difference(model, top_train, max_loss):
-    model.load_state_dict(torch.load('loo_params_50w.pt'))
+    model.load_state_dict(torch.load('loo_params_8w.pt'))
     x, y = load_iris(return_X_y=True)
     train_index = np.hstack((np.arange(max_loss), np.arange(max_loss + 1, len(x))))
     test_index = np.asarray([max_loss])
@@ -273,7 +267,7 @@ def approx_difference(model, top_train, max_loss):
 def main():
     outer_start_time = time.time()
     train, eig, pearson, spearman = list(), list(), list(), list()
-    for i in range(1):
+    for i in range(50):
         start_time = time.time()
         # max_loss, train_acc, test_acc = find_max_loss()  # 83 is always the highest loss then 133, 70, 77
         # print('Done max loss')
@@ -289,14 +283,14 @@ def main():
         spearman.append(spearmanr(exact_loss_diff, approx_loss_diff)[0])
         print('Done {}/{} in {:.2f} minutes'.format(i+1, 10, (time.time()-start_time)/60))
         if i % 10 == 0:
-            np.save('figure1/det_50w_l2_train.npy', train)
-            np.save('figure1/det_50w_l2_eig.npy', eig)
-            np.save('figure1/det_50w_l2_pearson.npy', pearson)
-            np.save('figure1/det_50w_l2_spearman.npy', spearman)
-    np.save('figure1/det_50w_l2_train.npy', train)
-    np.save('figure1/det_50w_l2_eig.npy', eig)
-    np.save('figure1/det_50w_l2_pearson.npy', pearson)
-    np.save('figure1/det_50w_l2_spearman.npy', spearman)
+            np.save('figure1/det_8w_train.npy', train)
+            np.save('figure1/det_8w_eig.npy', eig)
+            np.save('figure1/det_8w_pearson.npy', pearson)
+            np.save('figure1/det_8w_spearman.npy', spearman)
+    np.save('figure1/det_8w_train.npy', train)
+    np.save('figure1/det_8w_eig.npy', eig)
+    np.save('figure1/det_8w_pearson.npy', pearson)
+    np.save('figure1/det_8w_spearman.npy', spearman)
     print('Finished Iter in {:.2f} minutes'.format((time.time()-outer_start_time)/60))
 
     pass
