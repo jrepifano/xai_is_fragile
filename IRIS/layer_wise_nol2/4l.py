@@ -157,6 +157,7 @@ class influence_wrapper:
                 i_up_params.append(self.LiSSA(torch.autograd.functional.hvp(self.get_train_loss, weights, grad)[1], weights).detach().cpu().numpy())
         else:
             H = self.get_hessian(self.model.lin_last.weight)
+            H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
             H_inv = torch.inverse(H)
             for i in idx:
                 self.pointer = i
@@ -176,6 +177,7 @@ class influence_wrapper:
                                                                                        weights, train_grad)[1], weights).view(-1, 1)).detach().cpu().numpy()[0][0])
         else:
             H = self.get_hessian(weights)
+            H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
             H_inv = torch.inverse(H)
             for i in idx:
                 self.pointer = i

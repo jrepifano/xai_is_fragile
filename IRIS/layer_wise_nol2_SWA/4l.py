@@ -200,6 +200,7 @@ class influence_wrapper:
                                                                                        weights, train_grad)[1], weights).view(-1, 1)).detach().cpu().numpy()[0][0])
         else:
             H = self.get_hessian(weights)
+            H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
             H_inv = torch.inverse(H)
             for i in idx:
                 self.pointer = i
