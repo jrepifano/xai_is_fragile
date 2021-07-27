@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 from scipy.stats import pearsonr, spearmanr
 
 
-est = np.load('est_loss_diffs_lastshot.npy')
-true = np.load('true_loss_diffs_lastshot.npy')
+est = np.load('est_loss_diffs_long.npy')
+true = np.load('true_loss_diffs_long.npy')
 
 pearson = [pearsonr(x, y)[0].item() for (x, y) in zip(est, true)]
 spearman = [spearmanr(x, y)[0].item() for (x, y) in zip(est, true)]
@@ -18,5 +18,6 @@ plt.xlabel('Correlation')
 plt.title('Top 40 influential points')
 plt.show()
 print(len(est))
-print(np.max(np.abs(pearson)))
-print(np.max(np.abs(spearman)))
+print(est.shape[1])
+print(np.mean(np.abs(pearson)))
+print(np.mean(np.abs(spearman)))

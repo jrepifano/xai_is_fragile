@@ -3,14 +3,14 @@ import numpy as np
 
 
 class influence_wrapper:
-    def __init__(self, model, x_train, y_train, x_test=None, y_test=None, trainloader=None):
+    def __init__(self, model, x_train, y_train, x_test=None, y_test=None, trainloader=None, gpu='0'):
         self.x_train = x_train
         self.y_train = y_train
         self.trainloader = trainloader
         self.x_test = x_test
         self.y_test = y_test
         self.model = model
-        self.device = 'cuda:0' if next(self.model.parameters()).is_cuda else 'cpu'
+        self.device = 'cuda:'+gpu if next(self.model.parameters()).is_cuda else 'cpu'
 
     def get_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
@@ -36,9 +36,10 @@ class influence_wrapper:
     def get_hessian(self, weights):
         dim_1, dim_2 = weights.shape[0], weights.shape[1]
         H_i = torch.zeros((dim_1, dim_2, dim_1, dim_2), device=self.device)
-        for i in range(len(self.x_train)):
-            self.pointer = i
-            H_i += torch.autograd.functional.hessian(self.get_loss, weights, vectorize=True)
+        for itr, (x_train, y_train) in enumerate(self.trainloader):
+            self.x_train = x_train
+            self.y_train = y_train
+            H_i += torch.autograd.functional.hessian(self.get_train_loss, weights, vectorize=True)
         H = H_i / len(self.x_train)
         square_size = int(np.sqrt(torch.numel(H)))
         H = H.view(square_size, square_size)
@@ -53,7 +54,7 @@ class influence_wrapper:
         cur_estimate = v.clone()
         diff = prev_norm
         trainloader = iter(self.model.train_dataloader())
-        num_samples = 50000
+        num_samples = 60000
         while diff > 0.001 and count < 10000:
             try:
                 self.x_train, self.y_train = next(trainloader)
@@ -68,7 +69,7 @@ class influence_wrapper:
             diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
             prev_norm = np.linalg.norm(np.concatenate(numpy_est))
             # if count % 500 == 0:
-            print('Recursion Depth {}; Norm: {:.2f}'.format(count, prev_norm))
+            # print('Recursion Depth {}; Norm: {:.2f}'.format(count, prev_norm))
         if ihvp is None:
             ihvp = [b/scale for b in cur_estimate]
         else:
@@ -95,8 +96,11 @@ class influence_wrapper:
             H = self.get_hessian(weights)
             H = H + (0.001 * torch.eye(H.shape[0], device=self.device))
             H_inv = torch.inverse(H)
-            for i in range(len(self.x_train)):
-                self.pointer = i
-                train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
-                i_up_loss.append((test_grad.view(1, -1) @ (H_inv @ train_grad.float().view(-1, 1))).item())
+            for itr, (x_train, y_train) in enumerate(self.trainloader):
+                self.x_train = x_train
+                self.y_train = y_train
+                for i in range(len(self.x_train)):
+                    self.pointer = i
+                    train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
+                    i_up_loss.append((test_grad.view(1, -1) @ (H_inv @ train_grad.float().view(-1, 1))).item())
         return i_up_loss

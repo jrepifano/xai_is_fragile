@@ -4,7 +4,7 @@ import numpy as np
 import torchmetrics
 import pytorch_lightning as pl
 from torchvision import transforms
-from torchvision.datasets import CIFAR10
+from torchvision.datasets import MNIST
 from influence import influence_wrapper
 from torch.utils.data import DataLoader, random_split
 
@@ -18,7 +18,7 @@ class lenet(pl.LightningModule):
         self.train_acc = torchmetrics.Accuracy()
         self.test_acc = torchmetrics.Accuracy()
         self.criterion = torch.nn.CrossEntropyLoss()
-        self.conv_1 = torch.nn.Conv2d(3, 6, (5, 5))
+        self.conv_1 = torch.nn.Conv2d(1, 6, (5, 5))
         self.conv_2 = torch.nn.Conv2d(6, 16, (5, 5))
         self.conv_3 = torch.nn.Conv2d(16, 120, (5, 5))
         self.pool = torch.nn.AvgPool2d(2, 2)
@@ -72,8 +72,8 @@ class lenet(pl.LightningModule):
 
     def train_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        mnist_train = CIFAR10(os.getcwd(), train=True, download=True, transform=transform)
+                                        transforms.Normalize((0.1307,), (0.3081,)), transforms.Pad(2)])
+        mnist_train = MNIST(os.getcwd(), train=True, download=True, transform=transform)
         if self.train_idx_to_remove != None:
             mnist_train.data = np.delete(mnist_train.data, self.train_idx_to_remove, axis=0)
             mnist_train.targets = np.delete(mnist_train.targets, self.train_idx_to_remove, axis=0)
@@ -82,17 +82,17 @@ class lenet(pl.LightningModule):
 
     def val_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        mnist_test = CIFAR10(os.getcwd(), train=False, download=True, transform=transform)
+                                        transforms.Normalize((0.1307,), (0.3081,)), transforms.Pad(2)])
+        mnist_test = MNIST(os.getcwd(), train=False, download=True, transform=transform)
         return DataLoader(mnist_test, batch_size=self.batch_size, num_workers=4, shuffle=False, pin_memory=True)
 
     def test_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        mnist_test = CIFAR10(os.getcwd(), train=False, download=True, transform=transform)
+                                        transforms.Normalize((0.1307,), (0.3081,)), transforms.Pad(2)])
+        mnist_test = MNIST(os.getcwd(), train=False, download=True, transform=transform)
         if self.test_idx != None:
-            mnist_test.data = np.expand_dims(mnist_test.data[self.test_idx], axis=0)
-            mnist_test.targets = [mnist_test.targets[self.test_idx]]
+            mnist_test.data = mnist_test.data[self.test_idx].unsqueeze(0)
+            mnist_test.targets = mnist_test.targets[self.test_idx].unsqueeze(0)
         return DataLoader(mnist_test, batch_size=self.batch_size, num_workers=4, shuffle=False, pin_memory=True)
 
     def configure_optimizers(self):
@@ -116,8 +116,8 @@ class lenet(pl.LightningModule):
             raise Exception('Invalid set')
         criterion = torch.nn.CrossEntropyLoss(reduction='none')
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        mnist = CIFAR10(os.getcwd(), train=set, download=True, transform=transform)
+                                        transforms.Normalize((0.1307,), (0.3081,)), transforms.Pad(2)])
+        mnist = MNIST(os.getcwd(), train=set, download=True, transform=transform)
         dl = DataLoader(mnist, batch_size=self.batch_size, num_workers=4, shuffle=False, pin_memory=True)
         if self.test_idx != None:
             self.dl.data = self.mnist_test.data[self.test_idx].unsqueeze(0)
@@ -137,12 +137,12 @@ class lenet(pl.LightningModule):
 
 def get_influence(test_idx, batch_size, gpu=0):
     model = lenet(batch_size=batch_size, train_idx_to_remove=None, test_idx=test_idx)
-    model.load_state_dict(torch.load('lenet_cifar.pt'))
+    model.load_state_dict(torch.load('lenet_swa.pt'))
     i_up_loss = list()
     for itr, (x_test, y_test) in enumerate(model.test_dataloader()):
         pass
-    infl = influence_wrapper(model, None, None, x_test, y_test, model.train_dataloader())
-    i_up_loss.append(infl.i_up_loss(model.lin_last.weight, estimate=True))
+    infl = influence_wrapper(model, None, None, x_test, y_test, model.train_dataloader(), gpu=gpu)
+    i_up_loss.append(infl.i_up_loss(model.lin_last.weight, estimate=False))
     i_up_loss = np.hstack(i_up_loss)
     return i_up_loss
 
@@ -151,7 +151,7 @@ def finetune(gpu, top_40, test_idx, true_loss, batch_size):
     loss_diffs = list()
     for counter, idx in enumerate(top_40):
         model = lenet(batch_size=batch_size, train_idx_to_remove=idx, test_idx=test_idx)
-        model.load_state_dict(torch.load('lenet_cifar.pt'))
+        model.load_state_dict(torch.load('lenet_swa.pt'))
         for param in model.parameters():
             param.requires_grad = False
         model.lin_last.weight.requires_grad = True
@@ -161,13 +161,13 @@ def finetune(gpu, top_40, test_idx, true_loss, batch_size):
         early_stop_callback = pl.callbacks.early_stopping.EarlyStopping(
             monitor='loss',
             min_delta=0.00,
-            patience=10,
+            patience=5,
             verbose=False,
             mode='min',
             check_on_train_epoch_end=True
         )
         trainer = pl.Trainer(gpus=gpu, max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=100,
-                             callbacks=[early_stop_callback])
+                             callbacks=[early_stop_callback], stochastic_weight_avg=True)
         trainer.fit(model)
         loss_diffs.append(model.get_indiv_loss(model.test_dataloader()) - true_loss)
         # print('Done {}/{}'.format(counter + 1, len(top_40)))
@@ -185,7 +185,9 @@ def train(gpu, batch_size):
         mode='min',
         check_on_train_epoch_end=True
     )
-    trainer = pl.Trainer(gpus=gpu, max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=1, callbacks=[early_stop_callback])
+    trainer = pl.Trainer(gpus=gpu, max_epochs=no_epochs,
+                         auto_scale_batch_size='power', check_val_every_n_epoch=1, callbacks=[early_stop_callback],
+                         stochastic_weight_avg=True)
     # trainer.tune(model)
     trainer.fit(model)
-    torch.save(model.state_dict(), 'lenet_cifar.pt')
+    torch.save(model.state_dict(), 'lenet_swa.pt')

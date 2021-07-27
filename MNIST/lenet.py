@@ -62,7 +62,7 @@ class lenet(pl.LightningModule):
         acc = self.test_acc(logits.softmax(dim=-1), y)
 
     def on_validation_end(self):
-        print('Train Acc {:.2f}, Test Acc: {:.2f}'.format(self.train_acc.compute(), self.test_acc.compute()))
+        # print('Train Acc {:.2f}, Test Acc: {:.2f}'.format(self.train_acc.compute(), self.test_acc.compute()))
         self.train_acc.reset()
         self.test_acc.reset()
 
@@ -135,14 +135,14 @@ class lenet(pl.LightningModule):
             return loss.item()
 
 
-def get_influence(test_idx, batch_size):
+def get_influence(test_idx, batch_size, gpu=0):
     model = lenet(batch_size=batch_size, train_idx_to_remove=None, test_idx=test_idx)
     model.load_state_dict(torch.load('lenet.pt'))
     i_up_loss = list()
     for itr, (x_test, y_test) in enumerate(model.test_dataloader()):
         pass
-    infl = influence_wrapper(model, None, None, x_test, y_test, model.train_dataloader())
-    i_up_loss.append(infl.i_up_loss(model.lin_last.weight, estimate=False))
+    infl = influence_wrapper(model, None, None, x_test, y_test, model.train_dataloader(), gpu=gpu)
+    i_up_loss.append(infl.i_up_loss(model.lin_last.weight, estimate=True))
     i_up_loss = np.hstack(i_up_loss)
     return i_up_loss
 
@@ -170,7 +170,7 @@ def finetune(gpu, top_40, test_idx, true_loss, batch_size):
                              callbacks=[early_stop_callback])
         trainer.fit(model)
         loss_diffs.append(model.get_indiv_loss(model.test_dataloader()) - true_loss)
-        print('Done {}/{}'.format(counter + 1, len(top_40)))
+        # print('Done {}/{}'.format(counter + 1, len(top_40)))
     return loss_diffs
 
 

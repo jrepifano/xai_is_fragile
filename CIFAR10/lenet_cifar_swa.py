@@ -137,7 +137,7 @@ class lenet(pl.LightningModule):
 
 def get_influence(test_idx, batch_size, gpu=0):
     model = lenet(batch_size=batch_size, train_idx_to_remove=None, test_idx=test_idx)
-    model.load_state_dict(torch.load('lenet_cifar.pt'))
+    model.load_state_dict(torch.load('lenet_cifar_swa.pt'))
     i_up_loss = list()
     for itr, (x_test, y_test) in enumerate(model.test_dataloader()):
         pass
@@ -151,7 +151,7 @@ def finetune(gpu, top_40, test_idx, true_loss, batch_size):
     loss_diffs = list()
     for counter, idx in enumerate(top_40):
         model = lenet(batch_size=batch_size, train_idx_to_remove=idx, test_idx=test_idx)
-        model.load_state_dict(torch.load('lenet_cifar.pt'))
+        model.load_state_dict(torch.load('lenet_cifar_swa.pt'))
         for param in model.parameters():
             param.requires_grad = False
         model.lin_last.weight.requires_grad = True
@@ -167,7 +167,7 @@ def finetune(gpu, top_40, test_idx, true_loss, batch_size):
             check_on_train_epoch_end=True
         )
         trainer = pl.Trainer(gpus=gpu, max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=100,
-                             callbacks=[early_stop_callback])
+                             callbacks=[early_stop_callback], stochastic_weight_avg=True)
         trainer.fit(model)
         loss_diffs.append(model.get_indiv_loss(model.test_dataloader()) - true_loss)
         # print('Done {}/{}'.format(counter + 1, len(top_40)))
@@ -185,7 +185,9 @@ def train(gpu, batch_size):
         mode='min',
         check_on_train_epoch_end=True
     )
-    trainer = pl.Trainer(gpus=gpu, max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=1, callbacks=[early_stop_callback])
+    trainer = pl.Trainer(gpus=gpu, max_epochs=no_epochs,
+                         auto_scale_batch_size='power', check_val_every_n_epoch=1, callbacks=[early_stop_callback],
+                         stochastic_weight_avg=True)
     # trainer.tune(model)
     trainer.fit(model)
-    torch.save(model.state_dict(), 'lenet_cifar.pt')
+    torch.save(model.state_dict(), 'lenet_cifar_swa.pt')

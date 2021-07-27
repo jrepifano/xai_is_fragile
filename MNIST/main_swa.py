@@ -1,18 +1,18 @@
 import torch
 import numpy as np
 from scipy.stats import pearsonr, spearmanr
-from lenet import lenet, train, finetune, get_influence
+from lenet_swa import lenet, train, finetune, get_influence
 
 
 def main():
     est_loss_diffs = list()
     true_loss_diffs = list()
     for i in range(50):
-        gpu = '0'
+        gpu = '1'
         batch_size = 1024
         train(gpu, batch_size=batch_size)
         model = lenet(batch_size=batch_size)
-        model.load_state_dict(torch.load('lenet.pt'))
+        model.load_state_dict(torch.load('lenet_swa.pt'))
         model.eval()
         test_losses = model.get_losses(set='test')
         max_loss = np.argsort(test_losses)[-1]
@@ -25,8 +25,8 @@ def main():
         true_loss_diffs.append(finetune(gpu, top_40, max_loss, true_loss, batch_size=batch_size))
         # np.savetxt('true_loss_diffs.csv', true_loss_diffs, delimiter=',')
         # break
-        np.save('est_loss_diffs_max.npy', est_loss_diffs, allow_pickle=True)
-        np.save('true_loss_diffs_max.npy', true_loss_diffs, allow_pickle=True)
+        np.save('est_loss_diffs_max_swa.npy', est_loss_diffs, allow_pickle=True)
+        np.save('true_loss_diffs_max_swa.npy', true_loss_diffs, allow_pickle=True)
         print('{}/{}'.format(i, 50))
 
 
