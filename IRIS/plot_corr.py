@@ -5,7 +5,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 
-layers = [1, 2, 3, 4, 5, 6, 8]
+layers = [1, 2, 3, 4, 5, 6, 7, 8]
 widths = [8, 20, 14, 30, 40, 50]
 
 activation = 'selu'
