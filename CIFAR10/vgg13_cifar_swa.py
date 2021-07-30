@@ -108,8 +108,8 @@ class vgg13(pl.LightningModule):
                                         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
         mnist_test = CIFAR10(os.getcwd(), train=False, download=True, transform=transform)
         if self.test_idx != None:
-            mnist_test.data = mnist_test.data[self.test_idx].unsqueeze(0)
-            mnist_test.targets = mnist_test.targets[self.test_idx].unsqueeze(0)
+            mnist_test.data = np.expand_dims(mnist_test.data[self.test_idx], axis=0)
+            mnist_test.targets = [mnist_test.targets[self.test_idx]]
         return DataLoader(mnist_test, batch_size=self.batch_size, num_workers=4, shuffle=False, pin_memory=True)
 
     def configure_optimizers(self):
