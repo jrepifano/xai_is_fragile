@@ -60,6 +60,7 @@ class vgg13(pl.LightningModule):
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
         x = self.dropout(self.relu(self.fc3(x)))
+        return x
 
     def training_step(self, batch, batch_idx):
         x, y = batch
