@@ -2,15 +2,16 @@ import vdp
 import torch
 import numpy as np
 
+
 class influence_wrapper:
-    def __init__(self, model, x_train, y_train, x_test=None, y_test=None, trainloader=None):
+    def __init__(self, model, x_train, y_train, x_test=None, y_test=None, trainloader=None, gpu='0'):
         self.x_train = x_train
         self.y_train = y_train
         self.trainloader = trainloader
         self.x_test = x_test
         self.y_test = y_test
         self.model = model
-        self.device = 'cuda:0' if next(self.model.parameters()).is_cuda else 'cpu'
+        self.device = 'cuda:'+gpu if next(self.model.parameters()).is_cuda else 'cpu'
 
     def get_loss(self, mu, sigma):
         mu_x, sigma_x = self.model.bottleneck(self.x_train[self.pointer].unsqueeze(0))
@@ -76,7 +77,7 @@ class influence_wrapper:
         diff = prev_norm
         trainloader = iter(self.model.train_dataloader())
         num_samples = 60000
-        while diff > 0.001 and count < 10000:
+        while diff > 0.001 and count < 1000:
             try:
                 self.x_train, self.y_train = next(trainloader)
             except StopIteration:
@@ -93,7 +94,7 @@ class influence_wrapper:
             diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
             prev_norm = np.linalg.norm(np.concatenate(numpy_est))
             # if count % 500 == 0:
-            print('Recursion Depth {}; Norm: {:.6f}'.format(count, prev_norm))
+            # print('Recursion Depth {}; Norm: {:.2f}'.format(count, prev_norm))
         if ihvp is None:
             ihvp = [b/scale for b in cur_estimate]
         else:

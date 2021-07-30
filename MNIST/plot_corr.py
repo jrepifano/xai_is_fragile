@@ -29,3 +29,8 @@ for i in num_train:
 df['Spearman Correlation'] = pd.to_numeric(df['Spearman Correlation'], errors='coerce')
 sns.lineplot(x='Number of Training Examples', y='Spearman Correlation', data=df, hue='Type', ci=95)
 plt.show()
+
+plt.errorbar(np.arange(50), np.mean(true, axis=0), yerr=np.std(true, axis=0))
+plt.show()
+plt.errorbar(np.arange(50), np.mean(est, axis=0), yerr=np.std(est, axis=0))
+plt.show()

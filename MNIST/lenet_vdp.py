@@ -28,10 +28,11 @@ def scale_hyperp(log_det, nll, kl):
     for i in range(len(kl)):
         power = orderOfMagnitude(kl[i])
         power = smallest_power-power
-        beta.append(10.0**power)
+        # beta.append(10.0**power)
+        beta.append(1)
 
     # Find the tau scaling factor
-    tau = 10**(smallest_power - lli_power - 1)
+    tau = 10**(smallest_power - lli_power - 2)
 
     return alpha, beta, tau
 
@@ -156,7 +157,7 @@ class lenet(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
-        scheduler = {'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, verbose=True), 'monitor': 'loss', 'interval': 'epoch', 'frequency': 1}
+        scheduler = {'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, verbose=False), 'monitor': 'loss', 'interval': 'epoch', 'frequency': 1}
         return [optimizer], [scheduler]
 
     def get_progress_bar_dict(self):
@@ -196,16 +197,17 @@ class lenet(pl.LightningModule):
             loss = criterion(logits, y)
             return loss.item()
 
-def get_influence(test_idx, batch_size):
+
+def get_influence(test_idx, batch_size, gpu=0):
     model = lenet(batch_size=batch_size, train_idx_to_remove=None, test_idx=test_idx)
     model.load_state_dict(torch.load('lenet_vdp.pt'))
-    model.alpha, model.beta, model.tau = np.load('hyperparams.npy', allow_pickle=True)
-    model.alpha = 0
-    model.scale = True
+    # model.alpha, model.beta, model.tau = np.load('hyperparams.npy', allow_pickle=True)
+    # model.alpha = 0
+    # model.scale = True
     i_up_loss = list()
     for itr, (x_test, y_test) in enumerate(model.test_dataloader()):
         pass
-    infl = influence_wrapper(model, None, None, x_test, y_test, model.train_dataloader())
+    infl = influence_wrapper(model, None, None, x_test, y_test, model.train_dataloader(), gpu=gpu)
     i_up_loss.append(infl.i_up_loss(model.lin_last.mu.weight, model.lin_last.sigma.weight, estimate=True))
     i_up_loss = np.hstack(i_up_loss)
     return i_up_loss
@@ -216,9 +218,9 @@ def finetune(gpu, top_40, test_idx, true_loss, batch_size):
     for counter, idx in enumerate(top_40):
         model = lenet(batch_size=batch_size, train_idx_to_remove=idx, test_idx=test_idx)
         model.load_state_dict(torch.load('lenet_vdp.pt'))
-        model.alpha, model.beta, model.tau = np.load('hyperparams.npy', allow_pickle=True)
-        model.alpha = 0
-        model.scale = True
+        # model.alpha, model.beta, model.tau = np.load('hyperparams.npy', allow_pickle=True)
+        # model.alpha = 0
+        # model.scale = True
         no_epochs = 100
         early_stop_callback = pl.callbacks.early_stopping.EarlyStopping(
             monitor='loss',
