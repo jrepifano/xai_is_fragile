@@ -167,7 +167,7 @@ def finetune(gpu, top_40, test_idx, true_loss, batch_size):
             check_on_train_epoch_end=True
         )
         trainer = pl.Trainer(gpus=gpu, max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=100,
-                             callbacks=[early_stop_callback], stochastic_weight_avg=True)
+                             callbacks=[early_stop_callback], stochastic_weight_avg=False)
         trainer.fit(model)
         loss_diffs.append(model.get_indiv_loss(model.test_dataloader()) - true_loss)
         # print('Done {}/{}'.format(counter + 1, len(top_40)))
@@ -187,7 +187,7 @@ def train(gpu, batch_size):
     )
     trainer = pl.Trainer(gpus=gpu, max_epochs=no_epochs,
                          auto_scale_batch_size='power', check_val_every_n_epoch=1, callbacks=[early_stop_callback],
-                         stochastic_weight_avg=True)
+                         stochastic_weight_avg=False)
     # trainer.tune(model)
     trainer.fit(model)
     torch.save(model.state_dict(), 'lenet_swa.pt')
