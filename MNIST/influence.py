@@ -55,7 +55,7 @@ class influence_wrapper:
         diff = prev_norm
         trainloader = iter(self.model.train_dataloader())
         num_samples = 60000
-        while diff > 0.001 and count < 10000:
+        while diff > 0.001 and count < 1000:
             try:
                 self.x_train, self.y_train = next(trainloader)
             except StopIteration:
@@ -69,7 +69,7 @@ class influence_wrapper:
             diff = abs(np.linalg.norm(np.concatenate(numpy_est)) - prev_norm)
             prev_norm = np.linalg.norm(np.concatenate(numpy_est))
             # if count % 500 == 0:
-            # print('Recursion Depth {}; Norm: {:.2f}'.format(count, prev_norm))
+            print('Recursion Depth {}; Norm: {:.2f}'.format(count, prev_norm))
         if ihvp is None:
             ihvp = [b/scale for b in cur_estimate]
         else:

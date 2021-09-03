@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 
 layers = [1, 2, 3, 4, 5, 6, 7, 8]
-widths = [8, 20, 14, 30, 40, 50]
+widths = [8, 14, 20, 30, 40, 50]
 
 activation = 'selu'
 nol2 = np.abs([np.load('figure1_nol2_'+activation+'/det_' + str(i) + 'l_spearman.npy') for i in layers]).T
@@ -30,10 +30,10 @@ for i in range(len(layers)):
                        np.array(['L2' for _ in range(len(l2))]).reshape(-1, 1),
                        np.array([str(layers[i]) for _ in range(len(l2))]).reshape(-1, 1))),
                       columns=['Spearman Correlation', 'Type', 'Network Depth'])), ignore_index=True)
-    df = pd.concat((df, pd.DataFrame(np.hstack((l2swa[:, i].reshape(-1, 1),
-                       np.array(['L2 SWA' for _ in range(len(l2swa))]).reshape(-1, 1),
-                       np.array([str(layers[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
-                      columns=['Spearman Correlation', 'Type', 'Network Depth'])), ignore_index=True)
+    # df = pd.concat((df, pd.DataFrame(np.hstack((l2swa[:, i].reshape(-1, 1),
+    #                    np.array(['L2 SWA' for _ in range(len(l2swa))]).reshape(-1, 1),
+    #                    np.array([str(layers[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
+    #                   columns=['Spearman Correlation', 'Type', 'Network Depth'])), ignore_index=True)
     df = pd.concat((df, pd.DataFrame(np.hstack((vdp[:, i].reshape(-1, 1),
                        np.array(['VDP' for _ in range(len(vdp))]).reshape(-1, 1),
                        np.array([str(layers[i]) for _ in range(len(vdp))]).reshape(-1, 1))),
@@ -42,7 +42,7 @@ df['Spearman Correlation'] = pd.to_numeric(df['Spearman Correlation'], errors='c
 sns.barplot(x='Network Depth', y='Spearman Correlation', hue='Type', data=df, ci=95)
 plt.legend(loc="upper left", ncol=len(df.columns))
 plt.ylim([0, 1.1])
-plt.title('Iris Dataset')
+
 plt.show()
 
 activation = 'selu'
@@ -67,10 +67,10 @@ for i in range(len(widths)):
                        np.array(['L2' for _ in range(len(l2))]).reshape(-1, 1),
                        np.array([str(widths[i]) for _ in range(len(l2))]).reshape(-1, 1))),
                       columns=['Spearman Correlation', 'Type', 'Layer Width'])), ignore_index=True)
-    df = pd.concat((df, pd.DataFrame(np.hstack((l2swa[:, i].reshape(-1, 1),
-                       np.array(['L2 SWA' for _ in range(len(l2swa))]).reshape(-1, 1),
-                       np.array([str(widths[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
-                      columns=['Spearman Correlation', 'Type', 'Layer Width'])), ignore_index=True)
+    # df = pd.concat((df, pd.DataFrame(np.hstack((l2swa[:, i].reshape(-1, 1),
+    #                    np.array(['L2 SWA' for _ in range(len(l2swa))]).reshape(-1, 1),
+    #                    np.array([str(widths[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
+    #                   columns=['Spearman Correlation', 'Type', 'Layer Width'])), ignore_index=True)
     df = pd.concat((df, pd.DataFrame(np.hstack((vdp[:, i].reshape(-1, 1),
                        np.array(['VDP' for _ in range(len(vdp))]).reshape(-1, 1),
                        np.array([str(widths[i]) for _ in range(len(vdp))]).reshape(-1, 1))),
@@ -79,7 +79,7 @@ df['Spearman Correlation'] = pd.to_numeric(df['Spearman Correlation'])
 sns.barplot(x='Layer Width', y='Spearman Correlation', hue='Type', data=df, ci=95)
 plt.legend(loc="upper left", ncol=len(df.columns))
 plt.ylim([0, 1.1])
-plt.title('Iris Dataset')
+
 plt.show()
 
 
@@ -117,7 +117,7 @@ df['Pearson Correlation'] = pd.to_numeric(df['Pearson Correlation'], errors='coe
 sns.barplot(x='Network Depth', y='Pearson Correlation', hue='Type', data=df, ci=95)
 plt.legend(loc="upper left", ncol=len(df.columns))
 plt.ylim([0, 1.1])
-plt.title('Iris Dataset')
+
 plt.show()
 
 activation = 'selu'
@@ -154,7 +154,7 @@ df['Pearson Correlation'] = pd.to_numeric(df['Pearson Correlation'])
 sns.barplot(x='Layer Width', y='Pearson Correlation', hue='Type', data=df, ci=95)
 plt.legend(loc="upper left", ncol=len(df.columns))
 plt.ylim([0, 1.1])
-plt.title('Iris Dataset')
+
 plt.show()
 
 activation = 'selu'
@@ -190,7 +190,7 @@ for i in range(len(layers)):
 df['Train Accuracy'] = pd.to_numeric(df['Train Accuracy'], errors='coerce')
 sns.barplot(x='Network Depth', y='Train Accuracy', hue='Type', data=df, ci=95)
 plt.legend(loc="upper left", ncol=len(df.columns))
-plt.title('Iris Dataset')
+
 plt.ylim([0.5, 1.5])
 plt.show()
 
@@ -227,17 +227,17 @@ for i in range(len(widths)):
 df['Train Accuracy'] = pd.to_numeric(df['Train Accuracy'], errors='coerce')
 sns.barplot(x='Layer Width', y='Train Accuracy', hue='Type', data=df, ci=95)
 plt.legend(loc="upper left", ncol=len(df.columns))
-plt.title('Iris Dataset')
+
 plt.ylim([0.5, 1.5])
 plt.show()
 
 activation = 'selu'
-nol2 = np.abs([np.load('figure1_nol2_'+activation+'/det_' + str(i) + 'l_eig.npy') for i in layers]).T
-nol2swa = np.abs([np.load('figure1_depth_nol2_'+activation+'_swa/det_' + str(i) + 'l_eig.npy') for i in layers]).T
-l2 = np.abs([np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_eig.npy') for i in layers]).T
-l2swa = np.abs([np.load('figure1_depth_l2_'+activation+'_swa/det_' + str(i) + 'l_eig.npy') for i in layers]).T
+nol2 = np.array([np.load('figure1_nol2_'+activation+'/det_' + str(i) + 'l_eig.npy') for i in layers]).T
+nol2swa = np.array([np.load('figure1_depth_nol2_'+activation+'_swa/det_' + str(i) + 'l_eig.npy') for i in layers]).T
+l2 = np.array([np.load('figure1_l2_'+activation+'/det_' + str(i) + 'l_l2_eig.npy') for i in layers]).T
+l2swa = np.array([np.load('figure1_depth_l2_'+activation+'_swa/det_' + str(i) + 'l_eig.npy') for i in layers]).T
 activation = 'tanh'
-vdp = np.abs([np.load('figure1_vdp_'+activation+'/vdp_' + str(i) + 'l_eig.npy') for i in layers]).T
+vdp = np.array([np.load('figure1_vdp_'+activation+'/vdp_' + str(i) + 'l_eig.npy') for i in layers]).T
 
 df = pd.DataFrame(columns=['Top Eigenvalue', 'Type', 'Network Depth'])
 for i in range(len(layers)):
@@ -253,27 +253,27 @@ for i in range(len(layers)):
                        np.array(['L2' for _ in range(len(l2))]).reshape(-1, 1),
                        np.array([str(layers[i]) for _ in range(len(l2))]).reshape(-1, 1))),
                       columns=['Top Eigenvalue', 'Type', 'Network Depth'])), ignore_index=True)
-    df = pd.concat((df, pd.DataFrame(np.hstack((l2swa[:, i].reshape(-1, 1),
-                       np.array(['L2 SWA' for _ in range(len(l2swa))]).reshape(-1, 1),
-                       np.array([str(layers[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
-                      columns=['Top Eigenvalue', 'Type', 'Network Depth'])), ignore_index=True)
+    # df = pd.concat((df, pd.DataFrame(np.hstack((l2swa[:, i].reshape(-1, 1),
+    #                    np.array(['L2 SWA' for _ in range(len(l2swa))]).reshape(-1, 1),
+    #                    np.array([str(layers[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
+    #                   columns=['Top Eigenvalue', 'Type', 'Network Depth'])), ignore_index=True)
     df = pd.concat((df, pd.DataFrame(np.hstack((vdp[:, i].reshape(-1, 1),
                        np.array(['VDP' for _ in range(len(vdp))]).reshape(-1, 1),
                        np.array([str(layers[i]) for _ in range(len(vdp))]).reshape(-1, 1))),
                       columns=['Top Eigenvalue', 'Type', 'Network Depth'])), ignore_index=True)
 df['Top Eigenvalue'] = pd.to_numeric(df['Top Eigenvalue'], errors='coerce')
-sns.barplot(x='Network Depth', y='Top Eigenvalue', hue='Type', data=df, ci=95)
+sns.violinplot(x='Network Depth', y='Top Eigenvalue', hue='Type', data=df, ci=95)
 plt.legend(loc="upper left", ncol=len(df.columns))
-plt.title('Iris Dataset')
+
 plt.show()
 
 activation = 'selu'
-nol2 = np.abs([np.load('figure1_width_nol2_'+activation+'/det_' + str(i) + 'w_eig.npy') for i in widths]).T
-nol2swa = np.abs([np.load('figure1_width_nol2_'+activation+'_swa/det_' + str(i) + 'w_eig.npy') for i in widths]).T
-l2 = np.abs([np.load('figure1_width_l2_'+activation+'/det_' + str(i) + 'w_l2_eig.npy') for i in widths]).T
-l2swa = np.abs([np.load('figure1_width_l2_'+activation+'_swa/det_' + str(i) + 'w_eig.npy') for i in widths]).T
+nol2 = np.array([np.load('figure1_width_nol2_'+activation+'/det_' + str(i) + 'w_eig.npy') for i in widths]).T
+nol2swa = np.array([np.load('figure1_width_nol2_'+activation+'_swa/det_' + str(i) + 'w_eig.npy') for i in widths]).T
+l2 = np.array([np.load('figure1_width_l2_'+activation+'/det_' + str(i) + 'w_l2_eig.npy') for i in widths]).T
+l2swa = np.array([np.load('figure1_width_l2_'+activation+'_swa/det_' + str(i) + 'w_eig.npy') for i in widths]).T
 activation = 'tanh'
-vdp = np.abs([np.load('figure1_width_vdp_'+activation+'/vdp_' + str(i) + 'w_eig.npy') for i in widths]).T
+vdp = np.array([np.load('figure1_width_vdp_'+activation+'/vdp_' + str(i) + 'w_eig.npy') for i in widths]).T
 
 df = pd.DataFrame(columns=['Top Eigenvalue', 'Type', 'Layer Width'])
 for i in range(len(widths)):
@@ -289,16 +289,16 @@ for i in range(len(widths)):
                        np.array(['L2' for _ in range(len(l2))]).reshape(-1, 1),
                        np.array([str(widths[i]) for _ in range(len(l2))]).reshape(-1, 1))),
                       columns=['Top Eigenvalue', 'Type', 'Layer Width'])), ignore_index=True)
-    df = pd.concat((df, pd.DataFrame(np.hstack((l2swa[:, i].reshape(-1, 1),
-                       np.array(['L2 SWA' for _ in range(len(l2swa))]).reshape(-1, 1),
-                       np.array([str(widths[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
-                      columns=['Top Eigenvalue', 'Type', 'Layer Width'])), ignore_index=True)
+    # df = pd.concat((df, pd.DataFrame(np.hstack((l2swa[:, i].reshape(-1, 1),
+    #                    np.array(['L2 SWA' for _ in range(len(l2swa))]).reshape(-1, 1),
+    #                    np.array([str(widths[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
+    #                   columns=['Top Eigenvalue', 'Type', 'Layer Width'])), ignore_index=True)
     df = pd.concat((df, pd.DataFrame(np.hstack((vdp[:, i].reshape(-1, 1),
                        np.array(['VDP' for _ in range(len(vdp))]).reshape(-1, 1),
                        np.array([str(widths[i]) for _ in range(len(vdp))]).reshape(-1, 1))),
                       columns=['Top Eigenvalue', 'Type', 'Layer Width'])), ignore_index=True)
 df['Top Eigenvalue'] = pd.to_numeric(df['Top Eigenvalue'], errors='coerce')
-sns.barplot(x='Layer Width', y='Top Eigenvalue', hue='Type', data=df, ci=95)
+sns.violinplot(x='Layer Width', y='Top Eigenvalue', hue='Type', data=df, ci=95)
 plt.legend(loc="upper left", ncol=len(df.columns))
-plt.title('Iris Dataset')
+
 plt.show()

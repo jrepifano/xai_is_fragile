@@ -8,6 +8,7 @@ from sklearn.metrics import accuracy_score
 from scipy.stats import pearsonr, spearmanr
 from sklearn.model_selection import LeaveOneOut
 from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
 
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
@@ -26,6 +27,9 @@ class Model(torch.nn.Module):
         self.lin1 = torch.nn.Linear(n_feats, n_nodes)
         self.lin_last = torch.nn.Linear(n_nodes, n_classes)
         self.relu = torch.nn.Tanh()
+        self.true_loss = None
+        self.x_test = None
+        self.y_test = None
 
     def forward(self, x):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
@@ -49,13 +53,20 @@ class Model(torch.nn.Module):
         criterion = torch.nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.parameters()), lr=1e-3, weight_decay=0.005)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=100, verbose=False)
+        loss_diff = list()
         for epoch in range(no_epochs):
+            if no_epochs == 7500:
+                loss_diff.append(self.get_indiv_loss(self.x_test, self.y_test) - self.true_loss)
             optimizer.zero_grad()
             logits = self.forward(x)
             loss = criterion(logits, y)
             loss.backward()
             optimizer.step()
             scheduler.step(loss.item())
+        if no_epochs == 7500:
+            plt.plot(loss_diff)
+            plt.show()
+            pass
 
     def score(self, x, y):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
@@ -251,6 +262,9 @@ def exact_difference(model, top_train, max_loss):
         x_train, y_train = np.delete(x_train, i, 0), np.delete(y_train, i, 0)
         model = Model(x.shape[1], 5, 3).to('cuda:0')
         model.load_state_dict(torch.load('loo_params_1l.pt'))
+        model.true_loss = true_loss
+        model.x_test = x_test
+        model.y_test = y_test
         for param in model.parameters():
             param.requires_grad = False
         model.lin_last.weight.requires_grad = True

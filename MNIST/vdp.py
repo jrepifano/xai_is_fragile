@@ -1,4 +1,5 @@
 import torch
+import math
 
 
 def softplus(a):
@@ -143,7 +144,7 @@ class Softmax(torch.nn.Module):
 def ELBOLoss(mu, sigma, y):
     y_hot = torch.nn.functional.one_hot(y, num_classes=10)
     sigma_clamped = torch.log(1+torch.exp(torch.clamp(sigma, 0, 88)))
-    log_det = torch.mean(torch.log(torch.prod(sigma_clamped, dim=1)))
+    log_det = torch.mean(torch.log(torch.prod(sigma_clamped, dim=1))) if len(sigma_clamped.shape) > 1 else torch.mean(torch.log(torch.prod(sigma_clamped)))
     nll = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
     return log_det, nll
 
@@ -153,7 +154,7 @@ def ELBOLoss_2(outputs, y, model=None):
     sigma = outputs[1]
     y_hot = torch.nn.functional.one_hot(y, num_classes=10)
     sigma_clamped = torch.log(1+torch.exp(torch.clamp(sigma, 0, 88)))
-    log_det = torch.mean(torch.log(torch.prod(sigma_clamped, dim=1)))
+    log_det = torch.mean(torch.log(torch.prod(sigma_clamped, dim=1))) if len(sigma_clamped.shape) > 1 else torch.mean(torch.log(torch.prod(sigma_clamped)))
     nll = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
     if model == None:
         return nll
@@ -167,4 +168,47 @@ def gather_kl(model):
     for layer in model.children():
         if hasattr(layer, 'kl_term'):
             kl.append(layer.kl_term())
+    return kl
+
+
+def orderOfMagnitude(number):
+    return math.floor(math.log(number, 10))
+
+
+def scale_hyperp(log_det, nll, kl):
+    # Find the alpha scaling factor
+    lli_power = orderOfMagnitude(nll)
+    ldi_power = orderOfMagnitude(log_det)
+    alpha = 10**(lli_power - ldi_power - 1)     # log_det_i needs to be 1 less power than log_likelihood_i
+
+    beta = list()
+    # Find scaling factor for each kl term
+    kl = [i.item() for i in kl]
+    smallest_power = orderOfMagnitude(min(kl))
+    for i in range(len(kl)):
+        power = orderOfMagnitude(kl[i])
+        power = smallest_power-power
+        beta.append(1)
+        # beta.append(10.0**power)
+
+    # Find the tau scaling factor
+    tau = 10**(smallest_power - lli_power - 2)
+
+    return alpha, tau
+
+
+def gather_kl(model):
+    kl = list()
+    for layer in model.children():
+        if hasattr(layer, 'kl_term'):
+            kl.append(layer.kl_term())
+        elif isinstance(layer, torch.nn.Sequential):
+            for sublayer in layer.children():
+                if hasattr(sublayer, 'kl_term'):
+                    kl.append(sublayer.kl_term())
+                elif isinstance(sublayer, torch.nn.Module):
+                    for subsublayer in sublayer.children():
+                        if hasattr(subsublayer, 'kl_term'):
+                            kl.append(subsublayer.kl_term())
+
     return kl
