@@ -12,6 +12,9 @@ from torch.utils.data import DataLoader, random_split
 class lenet(pl.LightningModule):
     def __init__(self, batch_size, train_idx_to_remove=None, test_idx=None):
         super().__init__()
+        self.loss_diffs = list()
+        self.test_pt = None
+        self.true_loss = None
         self.batch_size = batch_size
         self.train_idx_to_remove = train_idx_to_remove
         self.test_idx = test_idx
@@ -48,7 +51,7 @@ class lenet(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         logits = self(x)
-        loss = self.criterion(logits, y)
+        loss = self.criterion(logits, y.long())
         acc = self.train_acc(logits.softmax(dim=-1), y)
         self.log('loss', loss)
         # self.count += len(y)
@@ -57,7 +60,7 @@ class lenet(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y = batch
         logits = self(x)
-        loss = self.criterion(logits, y)
+        loss = self.criterion(logits, y.long())
         self.log('val_loss', loss)
         acc = self.test_acc(logits.softmax(dim=-1), y)
 
@@ -66,14 +69,13 @@ class lenet(pl.LightningModule):
         self.train_acc.reset()
         self.test_acc.reset()
 
-    # def on_train_epoch_end(self):
-    #     print(self.count)
-    #     self.count = 0
+    def training_epoch_end(self):
+        self.loss_diffs.append(self.get_indiv_loss(self.test_pt) - self.true_loss)
 
     def train_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
                                         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        mnist_train = CIFAR10(os.getcwd(), train=True, download=True, transform=transform)
+        mnist_train = CIFAR10(os.getcwd(), train=True, download=False, transform=transform)
         if self.train_idx_to_remove != None:
             mnist_train.data = np.delete(mnist_train.data, self.train_idx_to_remove, axis=0)
             mnist_train.targets = np.delete(mnist_train.targets, self.train_idx_to_remove, axis=0)
@@ -83,13 +85,13 @@ class lenet(pl.LightningModule):
     def val_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
                                         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        mnist_test = CIFAR10(os.getcwd(), train=False, download=True, transform=transform)
+        mnist_test = CIFAR10(os.getcwd(), train=False, download=False, transform=transform)
         return DataLoader(mnist_test, batch_size=self.batch_size, num_workers=4, shuffle=False, pin_memory=True)
 
     def test_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
                                         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        mnist_test = CIFAR10(os.getcwd(), train=False, download=True, transform=transform)
+        mnist_test = CIFAR10(os.getcwd(), train=False, download=False, transform=transform)
         if self.test_idx != None:
             mnist_test.data = np.expand_dims(mnist_test.data[self.test_idx], axis=0)
             mnist_test.targets = [mnist_test.targets[self.test_idx]]
@@ -98,7 +100,7 @@ class lenet(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=0.001)
         scheduler = {'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, verbose=False), 'monitor': 'loss', 'interval': 'epoch', 'frequency': 1}
-        return [optimizer], [scheduler]
+        return [optimizer]#, [scheduler]
 
     def get_progress_bar_dict(self):
         # don't show the version number
@@ -117,7 +119,7 @@ class lenet(pl.LightningModule):
         criterion = torch.nn.CrossEntropyLoss(reduction='none')
         transform = transforms.Compose([transforms.ToTensor(),
                                         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        mnist = CIFAR10(os.getcwd(), train=set, download=True, transform=transform)
+        mnist = CIFAR10(os.getcwd(), train=set, download=False, transform=transform)
         dl = DataLoader(mnist, batch_size=self.batch_size, num_workers=4, shuffle=False, pin_memory=True)
         if self.test_idx != None:
             self.dl.data = self.mnist_test.data[self.test_idx].unsqueeze(0)
@@ -130,8 +132,8 @@ class lenet(pl.LightningModule):
 
     def get_indiv_loss(self, dl):
         for idx, (x, y) in enumerate(dl):
-            logits = self.forward(x)
-            loss = self.criterion(logits, y)
+            logits = self.forward(x.to('cuda:0'))
+            loss = self.criterion(logits, y.to('cuda:0').long())
             return loss.item()
 
 
@@ -168,7 +170,9 @@ def finetune(gpu, top_40, test_idx, true_loss, batch_size):
         )
         trainer = pl.Trainer(gpus=gpu, max_epochs=no_epochs, auto_scale_batch_size='power', check_val_every_n_epoch=100,
                              callbacks=[early_stop_callback])
+        model.true_loss = true_loss
         trainer.fit(model)
+        model.test_pt = model.test_dataloader()
         loss_diffs.append(model.get_indiv_loss(model.test_dataloader()) - true_loss)
         # print('Done {}/{}'.format(counter + 1, len(top_40)))
     return loss_diffs

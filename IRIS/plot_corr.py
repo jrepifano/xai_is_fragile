@@ -35,7 +35,7 @@ for i in range(len(layers)):
     #                    np.array([str(layers[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
     #                   columns=['Spearman Correlation', 'Type', 'Network Depth'])), ignore_index=True)
     df = pd.concat((df, pd.DataFrame(np.hstack((vdp[:, i].reshape(-1, 1),
-                       np.array(['VDP' for _ in range(len(vdp))]).reshape(-1, 1),
+                       np.array(['BNN' for _ in range(len(vdp))]).reshape(-1, 1),
                        np.array([str(layers[i]) for _ in range(len(vdp))]).reshape(-1, 1))),
                       columns=['Spearman Correlation', 'Type', 'Network Depth'])), ignore_index=True)
 df['Spearman Correlation'] = pd.to_numeric(df['Spearman Correlation'], errors='coerce')
@@ -72,7 +72,7 @@ for i in range(len(widths)):
     #                    np.array([str(widths[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
     #                   columns=['Spearman Correlation', 'Type', 'Layer Width'])), ignore_index=True)
     df = pd.concat((df, pd.DataFrame(np.hstack((vdp[:, i].reshape(-1, 1),
-                       np.array(['VDP' for _ in range(len(vdp))]).reshape(-1, 1),
+                       np.array(['BNN' for _ in range(len(vdp))]).reshape(-1, 1),
                        np.array([str(widths[i]) for _ in range(len(vdp))]).reshape(-1, 1))),
                       columns=['Spearman Correlation', 'Type', 'Layer Width'])), ignore_index=True)
 df['Spearman Correlation'] = pd.to_numeric(df['Spearman Correlation'])
@@ -110,7 +110,7 @@ for i in range(len(layers)):
                        np.array([str(layers[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
                       columns=['Pearson Correlation', 'Type', 'Network Depth'])), ignore_index=True)
     df = pd.concat((df, pd.DataFrame(np.hstack((vdp[:, i].reshape(-1, 1),
-                       np.array(['VDP' for _ in range(len(vdp))]).reshape(-1, 1),
+                       np.array(['BNN' for _ in range(len(vdp))]).reshape(-1, 1),
                        np.array([str(layers[i]) for _ in range(len(vdp))]).reshape(-1, 1))),
                       columns=['Pearson Correlation', 'Type', 'Network Depth'])), ignore_index=True)
 df['Pearson Correlation'] = pd.to_numeric(df['Pearson Correlation'], errors='coerce')
@@ -147,7 +147,7 @@ for i in range(len(widths)):
                        np.array([str(widths[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
                       columns=['Pearson Correlation', 'Type', 'Layer Width'])), ignore_index=True)
     df = pd.concat((df, pd.DataFrame(np.hstack((vdp[:, i].reshape(-1, 1),
-                       np.array(['VDP' for _ in range(len(vdp))]).reshape(-1, 1),
+                       np.array(['BNN' for _ in range(len(vdp))]).reshape(-1, 1),
                        np.array([str(widths[i]) for _ in range(len(vdp))]).reshape(-1, 1))),
                       columns=['Pearson Correlation', 'Type', 'Layer Width'])), ignore_index=True)
 df['Pearson Correlation'] = pd.to_numeric(df['Pearson Correlation'])
@@ -184,7 +184,7 @@ for i in range(len(layers)):
                        np.array([str(layers[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
                       columns=['Train Accuracy', 'Type', 'Network Depth'])), ignore_index=True)
     df = pd.concat((df, pd.DataFrame(np.hstack((vdp[:, i].reshape(-1, 1),
-                       np.array(['VDP' for _ in range(len(vdp))]).reshape(-1, 1),
+                       np.array(['BNN' for _ in range(len(vdp))]).reshape(-1, 1),
                        np.array([str(layers[i]) for _ in range(len(vdp))]).reshape(-1, 1))),
                       columns=['Train Accuracy', 'Type', 'Network Depth'])), ignore_index=True)
 df['Train Accuracy'] = pd.to_numeric(df['Train Accuracy'], errors='coerce')
@@ -221,7 +221,7 @@ for i in range(len(widths)):
                        np.array([str(widths[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
                       columns=['Train Accuracy', 'Type', 'Layer Width'])), ignore_index=True)
     df = pd.concat((df, pd.DataFrame(np.hstack((vdp[:, i].reshape(-1, 1),
-                       np.array(['VDP' for _ in range(len(vdp))]).reshape(-1, 1),
+                       np.array(['BNN' for _ in range(len(vdp))]).reshape(-1, 1),
                        np.array([str(widths[i]) for _ in range(len(vdp))]).reshape(-1, 1))),
                       columns=['Train Accuracy', 'Type', 'Layer Width'])), ignore_index=True)
 df['Train Accuracy'] = pd.to_numeric(df['Train Accuracy'], errors='coerce')
@@ -258,11 +258,12 @@ for i in range(len(layers)):
     #                    np.array([str(layers[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
     #                   columns=['Top Eigenvalue', 'Type', 'Network Depth'])), ignore_index=True)
     df = pd.concat((df, pd.DataFrame(np.hstack((vdp[:, i].reshape(-1, 1),
-                       np.array(['VDP' for _ in range(len(vdp))]).reshape(-1, 1),
+                       np.array(['BNN' for _ in range(len(vdp))]).reshape(-1, 1),
                        np.array([str(layers[i]) for _ in range(len(vdp))]).reshape(-1, 1))),
                       columns=['Top Eigenvalue', 'Type', 'Network Depth'])), ignore_index=True)
 df['Top Eigenvalue'] = pd.to_numeric(df['Top Eigenvalue'], errors='coerce')
-sns.violinplot(x='Network Depth', y='Top Eigenvalue', hue='Type', data=df, ci=95)
+g = sns.barplot(x='Network Depth', y='Top Eigenvalue', hue='Type', data=df, ci=95)
+g.set_yscale("log")
 plt.legend(loc="upper left", ncol=len(df.columns))
 
 plt.show()
@@ -294,11 +295,12 @@ for i in range(len(widths)):
     #                    np.array([str(widths[i]) for _ in range(len(l2swa))]).reshape(-1, 1))),
     #                   columns=['Top Eigenvalue', 'Type', 'Layer Width'])), ignore_index=True)
     df = pd.concat((df, pd.DataFrame(np.hstack((vdp[:, i].reshape(-1, 1),
-                       np.array(['VDP' for _ in range(len(vdp))]).reshape(-1, 1),
+                       np.array(['BNN' for _ in range(len(vdp))]).reshape(-1, 1),
                        np.array([str(widths[i]) for _ in range(len(vdp))]).reshape(-1, 1))),
                       columns=['Top Eigenvalue', 'Type', 'Layer Width'])), ignore_index=True)
 df['Top Eigenvalue'] = pd.to_numeric(df['Top Eigenvalue'], errors='coerce')
-sns.violinplot(x='Layer Width', y='Top Eigenvalue', hue='Type', data=df, ci=95)
+g = sns.barplot(x='Layer Width', y='Top Eigenvalue', hue='Type', data=df, ci=95)
+g.set_yscale("log")
 plt.legend(loc="upper left", ncol=len(df.columns))
 
 plt.show()

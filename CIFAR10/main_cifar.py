@@ -8,9 +8,9 @@ def main():
     est_loss_diffs = list()
     true_loss_diffs = list()
     for i in range(50):
-        gpu = '4'
+        gpu = '0'
         batch_size = 1024
-        train(gpu, batch_size=batch_size)
+        # train(gpu, batch_size=batch_size)
         model = lenet(batch_size=batch_size)
         model.load_state_dict(torch.load('lenet_cifar.pt'))
         model.eval()

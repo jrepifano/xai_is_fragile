@@ -2,6 +2,7 @@ import os
 import time
 import torch
 import numpy as np
+import density_plot
 from pyhessian import hessian
 from sklearn.datasets import load_iris
 from sklearn.metrics import accuracy_score
@@ -85,10 +86,10 @@ class Model(torch.nn.Module):
             loss.backward()
             optimizer.step()
             scheduler.step(loss.item())
-        if no_epochs == 7500:
-            plt.plot(loss_diff)
-            plt.show()
-            pass
+        # if no_epochs == 7500:
+        #     plt.plot(loss_diff)
+        #     plt.show()
+        #     pass
 
     def score(self, x, y):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
@@ -221,6 +222,8 @@ def get_hessian_info(model, x, y):
     criterion = torch.nn.CrossEntropyLoss()
     hessian_comp = hessian(model, criterion, data=(x, y), cuda=True)
     top_eigenvalues, top_eigenvector = hessian_comp.eigenvalues()
+    density_eigen, density_weight = hessian_comp.density()
+    # density_plot.get_esd_plot(density_eigen, density_weight)
     return top_eigenvalues[-1]
 
 
@@ -322,6 +325,11 @@ def main():
         print('Done top train')
         approx_loss_diff = approx_difference(model, top_train, max_loss)
         exact_loss_diff = exact_difference(model, top_train, max_loss)
+        fig, ax1 = plt.subplots()
+        ax2 = ax1.twinx()
+        ax1.plot(np.arange(len(approx_loss_diff)), exact_loss_diff)
+        ax2.plot(np.arange(len(approx_loss_diff)), approx_loss_diff)
+        plt.show()
         print('Done Exact Diff')
         train.append(train_acc)
         eig.append(top_eig)

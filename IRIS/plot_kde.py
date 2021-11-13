@@ -30,26 +30,24 @@ def main():
 
     mean = [np.mean(a) for a in spearman]
     std = [np.std(a) for a in spearman]
-    plt.bar(np.arange(8)+1 - 0.2, mean, 0.4, yerr=std, label='Deterministic - SELU')
+    plt.bar(np.arange(8)+1 - 0.2, mean, 0.4, yerr=std, label='L2')
     mean = [np.mean(a[:, 0]) for a in spearman_vdp]
     std = [np.std(a[:, 0]) for a in spearman_vdp]
-    plt.bar(np.arange(8)+1 + 0.2, mean, 0.4, yerr=std, label='Stochastic - Tanh')
+    plt.bar(np.arange(8)+1 + 0.2, mean, 0.4, yerr=std, label='BNN')
     plt.xticks(np.arange(8)+1, ['1', '2', '3', '4', '5', '6', '7', '8'])
-    plt.xlabel('Number of Layers')
+    plt.xlabel('Network Depth')
     plt.ylabel('Spearman Correlation')
-    plt.title('Iris')
     plt.legend()
     plt.show()
-    mean = [np.nanmean(a) for a in eig]
-    std = [np.nanstd(a) for a in eig]
-    plt.bar(np.arange(8)+1 - 0.2, mean, 0.4, yerr=std, label='Deterministic - SELU')
-    mean = [np.nanmean(a) for a in eig_vdp]
-    std = [np.nanstd(a) for a in eig_vdp]
-    plt.bar(np.arange(8)+1 + 0.2, mean, 0.4, yerr=std, label='Stochastic - Tanh')
+    mean = [np.nanmean(np.abs(a)) for a in eig]
+    std = [np.nanstd(np.abs(a)) for a in eig]
+    plt.bar(np.arange(8)+1 - 0.2, mean, 0.4, yerr=std, label='L2')
+    mean = [np.nanmean(np.abs(a)) for a in eig_vdp]
+    std = [np.nanstd(np.abs(a)) for a in eig_vdp]
+    plt.bar(np.arange(8)+1 + 0.2, mean, 0.4, yerr=std, label='BNN')
     plt.xticks(np.arange(8)+1, ['1', '2', '3', '4', '5', '6', '7', '8'])
-    plt.xlabel('Number of Layers')
+    plt.xlabel('Network Depth')
     plt.ylabel('Top Eigenvalue of Hessian')
-    plt.title('Iris')
     plt.legend()
     plt.show()
 
@@ -66,24 +64,22 @@ def main():
     spearman_vdp = np.abs([np.load('figure1_width_vdp_'+activation+'/vdp_' + str(i) + 'w_spearman.npy') for i in widths])
     eig_vdp = [np.load('figure1_width_vdp_'+activation+'/vdp_' + str(i) + 'w_eig.npy') for i in widths]
 
-    plt.bar(np.arange(6)+1 - 0.2, np.mean(spearman, axis=1), 0.4, yerr=np.std(spearman, axis=1), label='Deterministic - SELU')
+    plt.bar(np.arange(6)+1 - 0.2, np.mean(spearman, axis=1), 0.4, yerr=np.std(spearman, axis=1), label='L2')
     mean = [np.mean(a[:, 0]) for a in spearman_vdp]
     std = [np.std(a[:, 0]) for a in spearman_vdp]
-    plt.bar(np.arange(6)+1 + 0.2, mean, 0.4, yerr=std, label='Stochastic - Tanh')
+    plt.bar(np.arange(6)+1 + 0.2, mean, 0.4, yerr=std, label='BNN')
     plt.xticks(np.arange(6)+1, ['8', '14', '20', '30', '40', '50'])
-    plt.xlabel('Width of layer')
+    plt.xlabel('Layer Width')
     plt.ylabel('Spearman Correlation')
-    plt.title('Iris')
     plt.legend()
     plt.show()
-    mean = [np.nanmean(a) for a in eig_vdp]
-    std = [np.nanstd(a) for a in eig_vdp]
-    plt.bar(np.arange(6)+1 - 0.2, np.nanmean(eig, axis=1), 0.4, yerr=np.nanstd(eig, axis=1), label='Deterministic - SELU')
-    plt.bar(np.arange(6)+1 + 0.2, mean, 0.4, yerr=std, label='Stochastic - Tanh')
+    mean = [np.nanmean(np.abs(a)) for a in eig_vdp]
+    std = [np.nanstd(np.abs(a)) for a in eig_vdp]
+    plt.bar(np.arange(6)+1 - 0.2, np.nanmean(eig, axis=1), 0.4, yerr=np.nanstd(eig, axis=1), label='L2')
+    plt.bar(np.arange(6)+1 + 0.2, mean, 0.4, yerr=std, label='BNN')
     plt.xticks(np.arange(6)+1, ['8', '14', '20', '30', '40', '50'])
-    plt.xlabel('Width of layer')
+    plt.xlabel('Layer Width')
     plt.ylabel('Top Eigenvalue of Hessian')
-    plt.title('Iris')
     plt.legend()
     plt.show()
 
@@ -107,9 +103,8 @@ def main():
     std = [np.std(a) for a in spearman]
     plt.bar(np.arange(8)+1 + 0.2, mean, 0.4, yerr=std, label='Retrain Top Layer')
     plt.xticks(np.arange(8)+1, ['1', '2', '3', '4', '5', '6', '7', '8'])
-    plt.xlabel('Number of Layers')
+    plt.xlabel('Network Depth')
     plt.ylabel('Spearman Correlation')
-    plt.title('Iris - Retraining schemes')
     plt.legend()
     plt.show()
 

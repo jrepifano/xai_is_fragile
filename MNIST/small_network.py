@@ -2,6 +2,8 @@ import os
 import sys
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
+from torch.nn.utils import prune
 from scipy.stats import spearmanr
 from torchvision.datasets import MNIST
 
@@ -10,22 +12,21 @@ class Model(torch.nn.Module):
     def __init__(self, width=32):
         super(Model, self).__init__()
         self.width = width
-        self.layer_1 = torch.nn.Linear(28 * 28, width)
-        self.lin_last = torch.nn.Linear(width, 10)
-        self.relu = torch.nn.ReLU()
+        self.lin_1 = torch.nn.Linear(784, 128)
+        self.lin_last = torch.nn.Linear(128, 10)
+        self.flatten = torch.nn.Flatten()
+        self.relu = torch.nn.Tanh()
         self.alpha = None
         self.tau = None
         self.criterion = torch.nn.CrossEntropyLoss()
 
     def forward(self, x):
-        x = self.layer_1(x)
-        x = self.relu(x)
+        x = self.relu(self.lin_1(x))
         x = self.lin_last(x)
         return x
 
     def bottleneck(self, x):
-        x = self.layer_1(x)
-        x = self.relu(x)
+        x = self.relu(self.lin_1(x))
         return x
 
     def score(self, logits, y):
@@ -36,15 +37,29 @@ class Model(torch.nn.Module):
         loss = self.criterion(x, y)
         return loss
 
+    def prune_model(self, percentage, model_name):
+        parameter = ((self.lin_1, 'weight'),
+                     (self.lin_last, 'weight'))
+        prune.global_unstructured(
+            parameter,
+            pruning_method=prune.L1Unstructured,
+            amount=percentage)
 
-def train(model, no_epochs, train_idx_to_remove=None, save=False):
+        for module, param in parameter:
+            prune.remove(module, param)
+
+        torch.save(self.state_dict(), model_name)
+
+
+
+def train(model, no_epochs, train_idx_to_remove=None, save=False, max_loss=None):
     mnist_train = MNIST(os.getcwd(), train=True, download=False)
-    if train_idx_to_remove != None:
+    if train_idx_to_remove is not None:
         mnist_train.data = np.delete(mnist_train.data, train_idx_to_remove, axis=0)
         mnist_train.targets = np.delete(mnist_train.targets, train_idx_to_remove, axis=0)
-        x_train, y_train = mnist_train.data.view(59999, -1) / 255.0, mnist_train.targets
+        x_train, y_train = mnist_train.data.view(-1, 28*28) / 255.0, mnist_train.targets
     else:
-        x_train, y_train = mnist_train.data.view(60000, -1) / 255.0, mnist_train.targets
+        x_train, y_train = mnist_train.data.view(-1, 28*28) / 255.0, mnist_train.targets
     mnist_test = MNIST(os.getcwd(), train=False, download=False)
 
     x_test, y_test = mnist_test.data.view(10000, -1)/255.0, mnist_test.targets
@@ -58,6 +73,7 @@ def train(model, no_epochs, train_idx_to_remove=None, save=False):
     model.to('cuda:0')
     train_accs = []
     test_accs = []
+    epochs, test_loss = list(), list()
     for epoch in range(no_epochs):
         total_loss = 0
         model.train()
@@ -74,11 +90,17 @@ def train(model, no_epochs, train_idx_to_remove=None, save=False):
         logits = model.forward(x_test.float().to('cuda:0'))
         test_acc = model.score(logits, y_test.to('cuda:0'))
         test_accs.append(test_acc)
-        # if (epoch % 500) == 0 or (epoch == no_epochs-1):
-        #     print('Epoch {}/{}: Training Loss: {:.2f}'.format(epoch + 1, no_epochs, total_loss))
-        #     print('Train Accuracy: {:.2f}'.format(train_acc))
+        if (epoch % 100) == 0 or (epoch == no_epochs-1):
+            if max_loss is not None:
+                criterion = torch.nn.CrossEntropyLoss(reduction='none')
+                epochs.append(epoch)
+                test_loss.append(criterion(logits, y_test.to('cuda:0'))[max_loss].item())
+            print('Epoch {}/{}: Training Loss: {:.2f}'.format(epoch + 1, no_epochs, total_loss))
+            print('Train Accuracy: {:.2f}'.format(train_acc))
     if save:
         torch.save(model.state_dict(), 'fullycon_'+str(model.width)+'.pt')
+    plt.plot(epochs, test_loss)
+    plt.show()
     y_test = y_test.to('cuda:0')
     criterion = torch.nn.CrossEntropyLoss(reduction='none')
     test_losses = criterion(logits, y_test)
@@ -96,9 +118,9 @@ class influence_wrapper:
 
     def get_loss(self, weights):
         criterion = torch.nn.CrossEntropyLoss()
-        logits = self.model.bottleneck(self.x_train[self.pointer].reshape(1, -1))
+        logits = self.model.bottleneck(self.x_train[self.pointer])
         logits = logits @ weights.T + self.model.lin_last.bias
-        loss = criterion(logits, torch.tensor([self.y_train[self.pointer]], device=self.device).long())
+        loss = criterion(logits, torch.tensor(self.y_train[self.pointer], device=self.device).long())
         return loss
 
     def get_train_loss(self, weights):
@@ -150,7 +172,7 @@ class influence_wrapper:
                 ihvp = [b/scale for b in cur_estimate]
             else:
                 ihvp = [a + b/scale for (a, b) in zip(ihvp, cur_estimate)]
-            # print('Recursion Depth {}; Norm: {:.2f}'.format(count, prev_norm))
+            print('Recursion Depth {}; Norm: {:.2f}'.format(count, prev_norm))
         ihvp = torch.squeeze(torch.stack(ihvp))
         ihvp = [a / num_samples for a in ihvp]
         ihvp = torch.squeeze(torch.stack(ihvp))
@@ -161,8 +183,8 @@ class influence_wrapper:
         test_grad = torch.autograd.grad(self.get_test_loss(weights), weights)[0]
         if estimate:
             ihvp = self.LiSSA(test_grad, weights)
-            for i in range(len(self.x_train)):
-                self.pointer = i
+            for i in range(len(self.x_train)//12000):
+                self.pointer = np.arange(i*12000, (i+1)*12000)
                 train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
                 i_up_loss.append((-ihvp.view(1, -1) @ train_grad.view(-1, 1)).item())
         else:
@@ -188,38 +210,43 @@ def get_infl(model, max_loss):
     return i_up_loss
 
 
-def main(width=32, gpu=0):
+def main(width=128, gpu=0, group_size=12000):
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
     est_loss_diffs = list()
     true_loss_diffs = list()
-    for i in range(50):
+    for i in range(10):
         model = Model(width=width)
         inner_loss_diffs = list()
         test_losses = train(model, no_epochs=5000, save=True)
+        np.save('fully_con_' + str(width) + '_test_losses.npy', test_losses)
         model = Model(width=width)
         model.load_state_dict(torch.load('fullycon_'+str(width)+'.pt'))
+        test_losses = np.load('fully_con_'+str(width)+'_test_losses.npy')
         max_loss = np.argsort(test_losses)[-1]
         true_loss = test_losses[max_loss]
         i_up_loss = get_infl(model, max_loss)
-        top_40 = np.argsort(np.abs(i_up_loss))[::-1][:40]
-        est_loss_diffs.append(i_up_loss[top_40])
+        group_size = 1000
+        # top_40 = np.argsort(np.abs(i_up_loss))[::-1][:40]
+        top_40 = i_up_loss
+        est_loss_diffs.append(i_up_loss)
         for j in range(len(top_40)):
             model = Model(width=width)
             model.load_state_dict(torch.load('fullycon_'+str(width)+'.pt'))
-            test_losses = train(model, no_epochs=2000, train_idx_to_remove=top_40[j])
+            test_losses = train(model, no_epochs=2000, train_idx_to_remove=np.arange(j*group_size, (j+1)*group_size), max_loss=max_loss)
             inner_loss_diffs.append(test_losses[max_loss] - true_loss)
             print('outer {}/{}, in {}/{}'.format(i+1, 50, j+1, 40))
         true_loss_diffs.append(np.hstack(inner_loss_diffs))
         print(spearmanr(true_loss_diffs[i], est_loss_diffs[i]))
-        np.save('est_loss_diffs_'+str(width)+'.npy', est_loss_diffs, allow_pickle=True)
-        np.save('true_loss_diffs_'+str(width)+'.npy', true_loss_diffs, allow_pickle=True)
+        np.save('est_loss_diffs_'+str(width)+'_'+str(group_size)+'.npy', est_loss_diffs, allow_pickle=True)
+        np.save('true_loss_diffs_'+str(width)+'_'+str(group_size)+'.npy', true_loss_diffs, allow_pickle=True)
         pass
 
 if __name__ == '__main__':
     try:
         width = int(sys.argv[1])
         gpu = int(sys.argv[2])
-        main(width, gpu)
+        group_size = int(sys.argv[3])
+        main(width, gpu, group_size)
     except Exception:
-        main(width=8, gpu=0)
+        main(width=128, gpu=0, group_size=12000)

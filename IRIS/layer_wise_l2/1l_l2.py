@@ -2,6 +2,7 @@ import os
 import time
 import torch
 import numpy as np
+import density_plot
 from pyhessian import hessian
 from sklearn.datasets import load_iris
 from sklearn.metrics import accuracy_score
@@ -63,10 +64,10 @@ class Model(torch.nn.Module):
             loss.backward()
             optimizer.step()
             scheduler.step(loss.item())
-        if no_epochs == 7500:
-            plt.plot(loss_diff)
-            plt.show()
-            pass
+        # if no_epochs == 7500:
+            # plt.plot(loss_diff)
+            # plt.show()
+            # pass
 
     def score(self, x, y):
         device = 'cuda:0' if next(self.parameters()).is_cuda else 'cpu'
@@ -95,9 +96,12 @@ class influence_wrapper:
         self.model = model
         self.device = 'cuda:0' if next(self.model.parameters()).is_cuda else 'cpu'
 
-    def get_loss(self, weights):
+    def get_loss(self, weights, x_in=None):
         criterion = torch.nn.CrossEntropyLoss()
-        logits = self.model.bottleneck(self.x_train[self.pointer].reshape(1, -1))
+        if x_in is None:
+            logits = self.model.bottleneck(self.x_train[self.pointer].reshape(1, -1))
+        else:
+            logits = self.model.bottleneck(x_in.reshape(1, -1))
         logits = logits @ weights.T + self.model.lin_last.bias
         loss = criterion(logits, torch.tensor([self.y_train[self.pointer]], device=self.device).long())
         return loss
@@ -191,6 +195,18 @@ class influence_wrapper:
                 i_up_loss.append((test_grad.view(1, -1) @ (H_inv @ train_grad.float().view(-1, 1))).item())
         return i_up_loss
 
+    def i_pert_loss(self, weights, idx, estimate=False):
+        i_pert_loss = list()
+        test_grad = torch.autograd.grad(self.get_test_loss(weights), weights)[0]
+        H = self.get_hessian(weights)
+        H_inv = torch.inverse(H)
+        for i in idx:
+            self.pointer = i
+            train_grad = torch.autograd.grad(self.get_loss(weights), weights)[0]
+            x_in = torch.tensor(self.x_train[self.pointer], requires_grad=True, device='cuda:0', dtype=torch.float32)
+            x_grad = torch.autograd.grad(self.get_loss(weights, x_in), x_in)[0]
+            i_pert_loss.append((x_grad.float().view(-1, 1) @ -(test_grad.view(1, -1) @ (H_inv @ train_grad.float().view(-1, 1)))).detach().cpu().numpy().reshape(1, -1))
+        return i_pert_loss
 
 def get_hessian_info(model, x, y):
     device = 'cuda:0' if next(model.parameters()).is_cuda else 'cpu'
@@ -199,6 +215,8 @@ def get_hessian_info(model, x, y):
     criterion = torch.nn.CrossEntropyLoss()
     hessian_comp = hessian(model, criterion, data=(x, y), cuda=True)
     top_eigenvalues, top_eigenvector = hessian_comp.eigenvalues()
+    # density_eigen, density_weight = hessian_comp.density()
+    # density_plot.get_esd_plot(density_eigen, density_weight)
     return top_eigenvalues[-1]
 
 
@@ -297,10 +315,15 @@ def main():
         # print('Done max loss')
         max_loss = 83
         top_train, model, top_eig, train_acc = find_top_train(max_loss)
-        print('Done top train')
-        exact_loss_diff = exact_difference(model, top_train, max_loss)
         print('Done Exact Diff')
         approx_loss_diff = approx_difference(model, top_train, max_loss)
+        print('Done top train')
+        exact_loss_diff = exact_difference(model, top_train, max_loss)
+        fig, ax1 = plt.subplots()
+        ax2 = ax1.twinx()
+        ax1.plot(np.arange(len(approx_loss_diff)), exact_loss_diff)
+        ax2.plot(np.arange(len(approx_loss_diff)), approx_loss_diff)
+        plt.show()
         train.append(train_acc)
         eig.append(top_eig)
         pearson.append(pearsonr(exact_loss_diff, approx_loss_diff)[0])

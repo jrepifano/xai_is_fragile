@@ -2,6 +2,7 @@ import os
 import time
 import torch
 import numpy as np
+import density_plot
 from pyhessian import hessian
 from sklearn.datasets import load_iris
 from sklearn.metrics import accuracy_score
@@ -191,6 +192,8 @@ def get_hessian_info(model, x, y):
     criterion = torch.nn.CrossEntropyLoss()
     hessian_comp = hessian(model, criterion, data=(x, y), cuda=True)
     top_eigenvalues, top_eigenvector = hessian_comp.eigenvalues()
+    density_eigen, density_weight = hessian_comp.density()
+    density_plot.get_esd_plot(density_eigen, density_weight)
     return top_eigenvalues[-1]
 
 

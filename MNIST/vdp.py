@@ -192,7 +192,7 @@ def scale_hyperp(log_det, nll, kl):
         # beta.append(10.0**power)
 
     # Find the tau scaling factor
-    tau = 10**(smallest_power - lli_power - 2)
+    tau = 10**(smallest_power - lli_power - 1)
 
     return alpha, tau
 

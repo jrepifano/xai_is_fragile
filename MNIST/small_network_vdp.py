@@ -53,13 +53,8 @@ def train(model, no_epochs, train_idx_to_remove=None, save=False):
     mnist_test = MNIST(os.getcwd(), train=False, download=False)
 
     x_test, y_test = mnist_test.data.view(10000, -1)/255.0, mnist_test.targets
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=0.001, amsgrad=True)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, amsgrad=True)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=100, verbose=False)
-    if not save:
-        for param in model.parameters():
-            param.requires_grad = False
-        model.lin_last.weight.requires_grad = True
-        model.lin_last.bias.requires_grad = True
     model.to('cuda:0')
     train_accs = []
     test_accs = []
@@ -107,9 +102,9 @@ class influence_wrapper:
                   (mu_x ** 2 @ vdp.softplus(sigma).T)
         criterion = torch.nn.CrossEntropyLoss()
         loss = criterion(mu_y, torch.tensor([self.y_train[self.pointer]], device=self.device).long())
-        mu_y = torch.nn.functional.softmax(mu_y, dim=1)
-        J = mu_y*(1-mu_y)
-        sigma_y = (J**2) * sigma_y
+        # mu_y = torch.nn.functional.softmax(mu_y, dim=1)
+        # J = mu_y*(1-mu_y)
+        # sigma_y = (J**2) * sigma_y
         # loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor([self.y_train[self.pointer]], device=self.device))
         return loss
 
@@ -121,9 +116,9 @@ class influence_wrapper:
                   (mu_x ** 2 @ vdp.softplus(sigma).T)
         criterion = torch.nn.CrossEntropyLoss()
         loss = criterion(mu_y, torch.tensor(self.y_train, device=self.device).long())
-        mu_y = torch.nn.functional.softmax(mu_y, dim=1)
-        J = mu_y*(1-mu_y)
-        sigma_y = (J**2) * sigma_y
+        # mu_y = torch.nn.functional.softmax(mu_y, dim=1)
+        # J = mu_y*(1-mu_y)
+        # sigma_y = (J**2) * sigma_y
         # loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_train, device=self.device))
         return loss
 
@@ -135,7 +130,7 @@ class influence_wrapper:
                   (mu_x ** 2 @ vdp.softplus(sigma).T)
         criterion = torch.nn.CrossEntropyLoss()
         loss = criterion(mu_y.view(1, -1), torch.tensor([self.y_test], device=self.device).long())
-        # mu_y = torch.nn.functional.softmax(mu_y, dim=1)
+        # mu_y = torch.nn.functional.softmax(mu_y.view(1, -1), dim=1)
         # J = mu_y*(1-mu_y)
         # sigma_y = (J**2) * sigma_y
         # loss = vdp.ELBOLoss_2((mu_y, sigma_y), torch.tensor(self.y_test, device=self.device))
@@ -155,7 +150,7 @@ class influence_wrapper:
     def LiSSA(self, v, mu, sigma):
         count = 0
         cur_estimate = v
-        damping = 0
+        damping = 0.01
         scale = 10
         num_samples = len(self.x_train)
         prev_norm = 1
@@ -238,10 +233,12 @@ def main(width=32, gpu=0):
     true_loss_diffs = list()
     for i in range(50):
         model = Model(width=width)
+        alpha, tau = model.alpha, model.tau
         inner_loss_diffs = list()
-        test_losses = train(model, no_epochs=5000, save=True)
+        test_losses = train(model, no_epochs=10000, save=True)
         model = Model(width=width)
         model.load_state_dict(torch.load('fullycon_vdp_'+str(width)+'.pt'))
+        model.alpha, model.tau = alpha, tau
         max_loss = np.argsort(test_losses)[-1]
         true_loss = test_losses[max_loss]
         i_up_loss = get_infl(model, max_loss)
@@ -250,7 +247,8 @@ def main(width=32, gpu=0):
         for j in range(len(top_40)):
             model = Model(width=width)
             model.load_state_dict(torch.load('fullycon_vdp_'+str(width)+'.pt'))
-            test_losses = train(model, no_epochs=2000, train_idx_to_remove=top_40[j])
+            model.alpha, model.tau = alpha, tau
+            test_losses = train(model, no_epochs=4000, train_idx_to_remove=top_40[j])
             inner_loss_diffs.append(test_losses[max_loss] - true_loss)
             print('outer {}/{}, in {}/{}'.format(i+1, 50, j+1, 40))
         true_loss_diffs.append(np.hstack(inner_loss_diffs))
